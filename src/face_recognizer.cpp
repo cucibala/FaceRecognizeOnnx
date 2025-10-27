@@ -84,12 +84,38 @@ bool FaceRecognizer::loadModel(const std::string& modelPath) {
             outputNamePtrs_.push_back(name.c_str());
         }
         
+        // 打印实际使用的 Execution Provider
+        Ort::AllocatorWithDefaultOptions allocator;
+        auto providers = session_->GetProviders();
+        
         std::cout << "Face recognizer model loaded successfully!" << std::endl;
         std::cout << "Using input size: " << inputWidth_ << "x" << inputHeight_ << std::endl;
-        std::cout << "Number of outputs: " << outputNames_.size() << std::endl;
-        for (size_t i = 0; i < outputNames_.size(); i++) {
-            std::cout << "  Output " << i << ": " << outputNames_[i] << std::endl;
+        std::cout << "Active Execution Providers: ";
+        for (size_t i = 0; i < providers.size(); i++) {
+            std::cout << providers[i];
+            if (i < providers.size() - 1) std::cout << ", ";
         }
+        std::cout << std::endl;
+        
+        // 检查是否真的在用GPU
+        bool usingGPU = false;
+        for (const auto& provider : providers) {
+            if (provider.find("CUDA") != std::string::npos || 
+                provider.find("TensorRT") != std::string::npos) {
+                usingGPU = true;
+                break;
+            }
+        }
+        
+        if (useGPU_ && !usingGPU) {
+            std::cerr << "⚠️  WARNING: GPU requested but only CPU provider active!" << std::endl;
+            std::cerr << "    This will be VERY slow. Check:" << std::endl;
+            std::cerr << "    1. Are you using GPU version of ONNX Runtime?" << std::endl;
+            std::cerr << "    2. Is CUDA installed and in PATH?" << std::endl;
+            std::cerr << "    3. Did you compile with -DUSE_CUDA=ON?" << std::endl;
+        }
+        
+        std::cout << "Number of outputs: " << outputNames_.size() << std::endl;
         
         return true;
     } catch (const Ort::Exception& e) {
@@ -365,7 +391,7 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
             inputShapeBatch.data(), inputShapeBatch.size()
         );
         
-        // 批量推理
+        // 批量推理（精确测量）
         auto t1 = std::chrono::high_resolution_clock::now();
         auto outputTensors = session_->Run(
             Ort::RunOptions{nullptr},
@@ -373,7 +399,23 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
             outputNamePtrs_.data(), outputNamePtrs_.size()
         );
         auto t2 = std::chrono::high_resolution_clock::now();
-        std::cout << "->>>>>>>Batch inference completed in " << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << " ms" << std::endl;
+        auto inferenceTime = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+        
+        std::cout << "==> Batch inference: " << inferenceTime << " ms" << std::endl;
+        std::cout << "    Per image: " << (inferenceTime * 1.0 / batchSize) << " ms" << std::endl;
+        std::cout << "    Throughput: " << (batchSize * 1000.0 / inferenceTime) << " img/s" << std::endl;
+        
+        // 性能警告
+        double expectedTimeGPU = batchSize * 0.5; // 预期每张0.5ms
+        if (inferenceTime > expectedTimeGPU * 5 && useGPU_) {
+            std::cerr << "⚠️  Performance warning: Inference is too slow!" << std::endl;
+            std::cerr << "    Expected: ~" << expectedTimeGPU << " ms on GPU" << std::endl;
+            std::cerr << "    Actual: " << inferenceTime << " ms" << std::endl;
+            std::cerr << "    Possible issues:" << std::endl;
+            std::cerr << "      - Not using GPU (check providers above)" << std::endl;
+            std::cerr << "      - Using CPU version of ONNX Runtime" << std::endl;
+            std::cerr << "      - CUDA driver issues" << std::endl;
+        }
         
         // 获取输出
         float* outputData = outputTensors[0].GetTensorMutableData<float>();
@@ -431,15 +473,16 @@ void FaceRecognizer::setupGPU() {
     try {
         std::cout << "Configuring GPU support..." << std::endl;
         
-// #ifdef USE_TENSORRT
-//         // TensorRT 优先（性能最好）
-//         OrtTensorRTProviderOptions trt_options;
-//         trt_options.device_id = deviceId_;
-//         trt_options.trt_fp16_enable = 1; // 启用 FP16 加速
+#ifdef USE_TENSORRT
+        // TensorRT 优先（性能最好）
+        OrtTensorRTProviderOptions trt_options;
+        trt_options.device_id = deviceId_;
+        trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024;
+        trt_options.trt_fp16_enable = 1;
         
-//         sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
-//         std::cout << "✓ TensorRT provider enabled (GPU device: " << deviceId_ << ", FP16: ON)" << std::endl;
-// #endif
+        sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
+        std::cout << "✓ TensorRT provider added (device: " << deviceId_ << ", FP16: ON)" << std::endl;
+#endif
 
 #ifdef USE_CUDA
         // CUDA 作为备选或独立使用
@@ -447,7 +490,7 @@ void FaceRecognizer::setupGPU() {
         cuda_options.device_id = deviceId_;
         
         sessionOptions_.AppendExecutionProvider_CUDA(cuda_options);
-        std::cout << "✓ CUDA provider enabled (GPU device: " << deviceId_ << ")" << std::endl;
+        std::cout << "✓ CUDA provider added (device: " << deviceId_ << ")" << std::endl;
 #endif
 
 #if !defined(USE_CUDA) && !defined(USE_TENSORRT)
