@@ -2,6 +2,7 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <chrono>
 #include <opencv2/opencv.hpp>
 
 // 将图片文件转换为 Base64
@@ -64,152 +65,229 @@ std::string imageToBase64(const std::string& imagePath) {
     return ret;
 }
 
-void testJniInterface(const char* modelPath, const std::vector<std::string>& imagePaths) {
-    std::cout << "=== JNI Interface Test ===" << std::endl;
+void testBatchPerformance(const char* modelPath, const std::string& imagePath, int batchSize) {
+    std::cout << "\n--- Testing batch size: " << batchSize << " ---" << std::endl;
     
-    // 1. 初始化
-    std::cout << "\n1. Initializing..." << std::endl;
-    int ret = FR_Initialize(modelPath);
-    if (ret != 0) {
-        std::cerr << "Initialization failed with code: " << ret << std::endl;
+    // 转换图片为 Base64
+    std::string base64 = imageToBase64(imagePath);
+    if (base64.empty()) {
+        std::cerr << "Failed to convert image to base64" << std::endl;
         return;
     }
     
-    // 2. 准备输入数据
-    std::cout << "\n2. Preparing input data..." << std::endl;
-    std::vector<std::string> base64Strings;
+    // 复制 Base64 字符串形成批次
+    std::vector<std::string> base64Strings(batchSize, base64);
     std::vector<ImageBase64> images;
     
-    for (size_t i = 0; i < imagePaths.size(); i++) {
-        std::cout << "  Converting image " << (i + 1) << ": " << imagePaths[i] << std::endl;
-        std::string base64 = imageToBase64(imagePaths[i]);
-        
-        if (base64.empty()) {
-            std::cerr << "  Failed to convert image to base64" << std::endl;
-            continue;
-        }
-        
-        base64Strings.push_back(base64);
-        
+    for (int i = 0; i < batchSize; i++) {
         ImageBase64 img;
-        img.base64_str = base64Strings.back().c_str();
-        img.str_len = base64Strings.back().length();
-        
+        img.base64_str = base64Strings[i].c_str();
+        img.str_len = base64Strings[i].length();
+        img.user_data = nullptr;
         images.push_back(img);
-        
-        std::cout << "  Base64 length: " << img.str_len << std::endl;
-    }
-    
-    if (images.empty()) {
-        std::cerr << "No valid images to process" << std::endl;
-        FR_Cleanup();
-        return;
     }
     
     BatchImageInput input;
     input.images = images.data();
     input.count = images.size();
     
-    // 3. 批量处理
-    std::cout << "\n3. Processing batch..." << std::endl;
     BatchImageOutput output;
     output.results = nullptr;
     output.count = 0;
     
-    ret = FR_ProcessBatchImages(&input, &output);
+    // 测量处理时间
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    int ret = FR_ProcessBatchImages(&input, &output);
+    
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    
     if (ret != 0) {
         std::cerr << "Batch processing failed with code: " << ret << std::endl;
-        FR_Cleanup();
         return;
     }
     
-    // 4. 查看结果
-    std::cout << "\n4. Processing results:" << std::endl;
+    // 统计成功率
     int successCount = 0;
-    
     for (int i = 0; i < output.count; i++) {
-        const ImageResult& result = output.results[i];
-        
-        std::cout << "  Image " << (i + 1) << ": ";
-        if (result.status == 0) {
-            std::cout << "SUCCESS - Feature dim: " << result.feature_dim << std::endl;
-            
-            // 打印前 10 个特征值
-            std::cout << "    First 10 features: ";
-            for (int j = 0; j < std::min(10, result.feature_dim); j++) {
-                std::cout << result.features[j] << " ";
-            }
-            std::cout << std::endl;
-            
+        if (output.results[i].status == 0) {
             successCount++;
-        } else {
-            std::cout << "FAILED - Status: " << result.status << std::endl;
         }
     }
     
-    std::cout << "\nSuccess rate: " << successCount << "/" << output.count << std::endl;
+    // 输出性能指标
+    std::cout << "  Total time: " << duration.count() << " ms" << std::endl;
+    std::cout << "  Success rate: " << successCount << "/" << output.count << std::endl;
+    std::cout << "  Average time per image: " 
+              << (successCount > 0 ? duration.count() * 1.0 / successCount : 0) 
+              << " ms" << std::endl;
+    std::cout << "  Throughput: " 
+              << (duration.count() > 0 ? successCount * 1000.0 / duration.count() : 0) 
+              << " images/sec" << std::endl;
     
-    // 5. 如果有多个成功的结果，计算相似度
-    if (successCount >= 2) {
-        std::cout << "\n5. Computing similarities:" << std::endl;
-        
-        // 找出前两个成功的结果
-        int idx1 = -1, idx2 = -1;
-        for (int i = 0; i < output.count && idx2 == -1; i++) {
-            if (output.results[i].status == 0) {
-                if (idx1 == -1) {
-                    idx1 = i;
-                } else {
-                    idx2 = i;
-                }
-            }
+    // 显示第一张图片的特征（验证正确性）
+    if (output.count > 0 && output.results[0].status == 0) {
+        std::cout << "  Feature dim: " << output.results[0].feature_dim << std::endl;
+        std::cout << "  First 5 features: ";
+        for (int i = 0; i < std::min(5, output.results[0].feature_dim); i++) {
+            printf("%.4f ", output.results[0].features[i]);
         }
-        
-        if (idx1 >= 0 && idx2 >= 0) {
-            float similarity = FR_CompareFaces(
-                output.results[idx1].features, output.results[idx1].feature_dim,
-                output.results[idx2].features, output.results[idx2].feature_dim
-            );
-            
-            std::cout << "  Similarity between image " << (idx1 + 1) 
-                      << " and image " << (idx2 + 1) << ": " << similarity << std::endl;
-            
-            float threshold = 0.6f;
-            if (similarity > threshold) {
-                std::cout << "  -> Same person (similarity > " << threshold << ")" << std::endl;
-            } else {
-                std::cout << "  -> Different persons (similarity <= " << threshold << ")" << std::endl;
-            }
-        }
+        std::cout << std::endl;
     }
     
-    // 6. 释放结果
-    std::cout << "\n6. Freeing results..." << std::endl;
+    // 释放结果
     FR_FreeBatchResults(&output);
+}
+
+void runBenchmark(const char* modelPath, const std::string& imagePath) {
+    std::cout << "========================================" << std::endl;
+    std::cout << "  Batch Processing Performance Test" << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << "Model: " << modelPath << std::endl;
+    std::cout << "Image: " << imagePath << std::endl;
     
-    // 7. 清理
-    std::cout << "\n7. Cleanup..." << std::endl;
+    // 初始化
+    std::cout << "\nInitializing model..." << std::endl;
+    int ret = FR_Initialize(modelPath);
+    if (ret != 0) {
+        std::cerr << "Initialization failed with code: " << ret << std::endl;
+        return;
+    }
+    std::cout << "Model initialized successfully!" << std::endl;
+    
+    // 测试不同批次大小
+    std::vector<int> batchSizes = {1, 16, 32};
+    
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "  Running performance tests..." << std::endl;
+    std::cout << "========================================" << std::endl;
+    
+    struct BenchmarkResult {
+        int batchSize;
+        long long totalTime;
+        double avgTimePerImage;
+        double throughput;
+    };
+    
+    std::vector<BenchmarkResult> results;
+    
+    for (int batchSize : batchSizes) {
+        testBatchPerformance(modelPath, imagePath, batchSize);
+        
+        // 重新运行一次获取准确结果（排除首次缓存影响）
+        std::cout << "\n  Running again for accurate measurement..." << std::endl;
+        
+        std::string base64 = imageToBase64(imagePath);
+        std::vector<std::string> base64Strings(batchSize, base64);
+        std::vector<ImageBase64> images;
+        
+        for (int i = 0; i < batchSize; i++) {
+            ImageBase64 img;
+            img.base64_str = base64Strings[i].c_str();
+            img.str_len = base64Strings[i].length();
+            img.user_data = nullptr;
+            images.push_back(img);
+        }
+        
+        BatchImageInput input;
+        input.images = images.data();
+        input.count = images.size();
+        
+        BatchImageOutput output;
+        output.results = nullptr;
+        output.count = 0;
+        
+        auto start = std::chrono::high_resolution_clock::now();
+        FR_ProcessBatchImages(&input, &output);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        
+        int successCount = 0;
+        for (int i = 0; i < output.count; i++) {
+            if (output.results[i].status == 0) successCount++;
+        }
+        
+        BenchmarkResult result;
+        result.batchSize = batchSize;
+        result.totalTime = duration.count();
+        result.avgTimePerImage = successCount > 0 ? duration.count() * 1.0 / successCount : 0;
+        result.throughput = duration.count() > 0 ? successCount * 1000.0 / duration.count() : 0;
+        results.push_back(result);
+        
+        FR_FreeBatchResults(&output);
+        
+        std::cout << "  Confirmed: " << duration.count() << " ms" << std::endl;
+    }
+    
+    // 清理
+    std::cout << "\nCleaning up..." << std::endl;
     FR_Cleanup();
     
-    std::cout << "\n=== Test completed ===" << std::endl;
+    // 输出总结
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "  Performance Summary" << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << std::endl;
+    
+    printf("%-12s %-15s %-20s %-20s\n", 
+           "Batch Size", "Total Time(ms)", "Avg Time/Image(ms)", "Throughput(img/s)");
+    printf("%-12s %-15s %-20s %-20s\n", 
+           "----------", "--------------", "------------------", "-----------------");
+    
+    for (const auto& result : results) {
+        printf("%-12d %-15lld %-20.2f %-20.2f\n",
+               result.batchSize,
+               result.totalTime,
+               result.avgTimePerImage,
+               result.throughput);
+    }
+    
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "  Speedup Analysis" << std::endl;
+    std::cout << "========================================" << std::endl;
+    
+    if (results.size() >= 2) {
+        double baseline = results[0].avgTimePerImage;
+        std::cout << "Baseline (batch=1): " << baseline << " ms/image" << std::endl;
+        std::cout << std::endl;
+        
+        for (size_t i = 1; i < results.size(); i++) {
+            double speedup = baseline / results[i].avgTimePerImage;
+            double improvement = (1.0 - results[i].avgTimePerImage / baseline) * 100;
+            
+            std::cout << "Batch " << results[i].batchSize << " vs Batch 1:" << std::endl;
+            std::cout << "  Speedup: " << speedup << "x" << std::endl;
+            std::cout << "  Improvement: " << improvement << "%" << std::endl;
+            std::cout << std::endl;
+        }
+    }
+    
+    std::cout << "========================================" << std::endl;
+    std::cout << "  Test completed!" << std::endl;
+    std::cout << "========================================" << std::endl;
 }
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::cout << "Usage: " << argv[0] << " <model_path> <image1> [image2] [image3] ..." << std::endl;
+        std::cout << "Usage: " << argv[0] << " <model_path> <image_path>" << std::endl;
+        std::cout << "\nDescription:" << std::endl;
+        std::cout << "  This tool tests batch processing performance with different batch sizes." << std::endl;
+        std::cout << "  It will test batch sizes: 1, 16, and 32" << std::endl;
         std::cout << "\nExample:" << std::endl;
-        std::cout << "  " << argv[0] << " models/w600k_mbf.onnx test1.jpg test2.jpg" << std::endl;
+        std::cout << "  " << argv[0] << " models/w600k_mbf.onnx test.jpg" << std::endl;
+        std::cout << "\nOutput:" << std::endl;
+        std::cout << "  - Processing time for each batch size" << std::endl;
+        std::cout << "  - Average time per image" << std::endl;
+        std::cout << "  - Throughput (images/second)" << std::endl;
+        std::cout << "  - Speedup comparison" << std::endl;
         return 1;
     }
     
     const char* modelPath = argv[1];
-    std::vector<std::string> imagePaths;
+    const char* imagePath = argv[2];
     
-    for (int i = 2; i < argc; i++) {
-        imagePaths.push_back(argv[i]);
-    }
-    
-    testJniInterface(modelPath, imagePaths);
+    runBenchmark(modelPath, imagePath);
     
     return 0;
 }
