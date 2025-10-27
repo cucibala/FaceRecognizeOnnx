@@ -179,7 +179,7 @@ void runBenchmark(const char* modelPath, const std::string& imagePath, bool useG
     std::vector<BenchmarkResult> results;
     
     for (int batchSize : batchSizes) {
-        testBatchPerformance(modelPath, imagePath, batchSize);
+        // testBatchPerformance(modelPath, imagePath, batchSize);
         
         // 重新运行一次获取准确结果（排除首次缓存影响）
         std::cout << "\n  Running again for accurate measurement..." << std::endl;
