@@ -174,59 +174,61 @@ void runBenchmark(const char* modelPath, const std::string& imagePath, bool useG
     
     std::vector<BenchmarkResult> results;
     
-    for (const auto& config : configs) {
-        std::cout << "\n========================================" << std::endl;
-        std::cout << "  Test: " << config.numThreads << " threads, batch=" 
-                  << config.batchSize << ", total=" << config.totalImages << " images" << std::endl;
-        std::cout << "========================================" << std::endl;
-        
-        GlobalStats stats;
-        std::atomic<bool> stopFlag{false};
-        
-        int numBatchesPerThread = config.totalImages / (config.numThreads * config.batchSize);
-        
-        std::cout << "Starting " << config.numThreads << " worker threads..." << std::endl;
-        std::cout << "Each thread will process " << numBatchesPerThread << " batches of " 
-                  << config.batchSize << " images" << std::endl;
-        
-        auto testStart = std::chrono::high_resolution_clock::now();
-        
-        // 启动工作线程
-        std::vector<std::thread> threads;
-        for (int i = 0; i < config.numThreads; i++) {
-            threads.emplace_back(workerThread, i, std::ref(base64), config.batchSize, 
-                               numBatchesPerThread, std::ref(stats), std::ref(stopFlag));
-        }
-        
-        // 等待所有线程完成
-        for (auto& t : threads) {
-            t.join();
-        }
-        
-        auto testEnd = std::chrono::high_resolution_clock::now();
-        auto testDuration = std::chrono::duration_cast<std::chrono::milliseconds>(testEnd - testStart);
-        
-        // 强制处理缓冲区中的剩余图片
-        std::cout << "Flushing remaining images..." << std::endl;
-        FR_FlushBatch();
-        
-        // 统计结果
-        BenchmarkResult result;
-        result.numThreads = config.numThreads;
-        result.batchSize = config.batchSize;
-        result.totalImages = stats.totalProcessed.load();
-        result.successCount = stats.totalSuccess.load();
-        result.totalTime = testDuration.count();
-        result.throughput = result.totalTime > 0 ? result.successCount * 1000.0 / result.totalTime : 0;
-        result.avgLatency = result.successCount > 0 ? stats.totalLatency.load() * 1.0 / (stats.totalProcessed.load() / config.batchSize) : 0;
-        results.push_back(result);
-        
-        std::cout << "\nResults:" << std::endl;
-        std::cout << "  Total processed: " << result.totalImages << " images" << std::endl;
-        std::cout << "  Success count: " << result.successCount << " images" << std::endl;
-        std::cout << "  Total time: " << result.totalTime << " ms" << std::endl;
-        std::cout << "  Throughput: " << result.throughput << " img/s" << std::endl;
-        std::cout << "  Avg latency per batch: " << result.avgLatency << " ms" << std::endl;
+    while(true){
+        for (const auto& config : configs) {
+            std::cout << "\n========================================" << std::endl;
+            std::cout << "  Test: " << config.numThreads << " threads, batch=" 
+                      << config.batchSize << ", total=" << config.totalImages << " images" << std::endl;
+            std::cout << "========================================" << std::endl;
+            
+            GlobalStats stats;
+            std::atomic<bool> stopFlag{false};
+            
+            int numBatchesPerThread = config.totalImages / (config.numThreads * config.batchSize);
+            
+            std::cout << "Starting " << config.numThreads << " worker threads..." << std::endl;
+            std::cout << "Each thread will process " << numBatchesPerThread << " batches of " 
+                      << config.batchSize << " images" << std::endl;
+            
+            auto testStart = std::chrono::high_resolution_clock::now();
+            
+            // 启动工作线程
+            std::vector<std::thread> threads;
+            for (int i = 0; i < config.numThreads; i++) {
+                threads.emplace_back(workerThread, i, std::ref(base64), config.batchSize, 
+                                   numBatchesPerThread, std::ref(stats), std::ref(stopFlag));
+            }
+            
+            // 等待所有线程完成
+            for (auto& t : threads) {
+                t.join();
+            }
+            
+            auto testEnd = std::chrono::high_resolution_clock::now();
+            auto testDuration = std::chrono::duration_cast<std::chrono::milliseconds>(testEnd - testStart);
+            
+            // 强制处理缓冲区中的剩余图片
+            std::cout << "Flushing remaining images..." << std::endl;
+            FR_FlushBatch();
+            
+            // 统计结果
+            BenchmarkResult result;
+            result.numThreads = config.numThreads;
+            result.batchSize = config.batchSize;
+            result.totalImages = stats.totalProcessed.load();
+            result.successCount = stats.totalSuccess.load();
+            result.totalTime = testDuration.count();
+            result.throughput = result.totalTime > 0 ? result.successCount * 1000.0 / result.totalTime : 0;
+            result.avgLatency = result.successCount > 0 ? stats.totalLatency.load() * 1.0 / (stats.totalProcessed.load() / config.batchSize) : 0;
+            results.push_back(result);
+            
+            std::cout << "\nResults:" << std::endl;
+            std::cout << "  Total processed: " << result.totalImages << " images" << std::endl;
+            std::cout << "  Success count: " << result.successCount << " images" << std::endl;
+            std::cout << "  Total time: " << result.totalTime << " ms" << std::endl;
+            std::cout << "  Throughput: " << result.throughput << " img/s" << std::endl;
+            std::cout << "  Avg latency per batch: " << result.avgLatency << " ms" << std::endl;
+        }    
     }
     
     // 清理
