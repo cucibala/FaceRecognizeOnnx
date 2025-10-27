@@ -444,15 +444,15 @@ void FaceRecognizer::setupGPU() {
     try {
         std::cout << "Configuring GPU support..." << std::endl;
         
-#ifdef USE_TENSORRT
-        // TensorRT 优先（性能最好）
-        OrtTensorRTProviderOptions trt_options;
-        trt_options.device_id = deviceId_;
-        trt_options.trt_fp16_enable = 1; // 启用 FP16 加速
+// #ifdef USE_TENSORRT
+//         // TensorRT 优先（性能最好）
+//         OrtTensorRTProviderOptions trt_options;
+//         trt_options.device_id = deviceId_;
+//         trt_options.trt_fp16_enable = 1; // 启用 FP16 加速
         
-        sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
-        std::cout << "✓ TensorRT provider enabled (GPU device: " << deviceId_ << ", FP16: ON)" << std::endl;
-#endif
+//         sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
+//         std::cout << "✓ TensorRT provider enabled (GPU device: " << deviceId_ << ", FP16: ON)" << std::endl;
+// #endif
 
 #ifdef USE_CUDA
         // CUDA 作为备选或独立使用
