@@ -83,7 +83,7 @@ void runBenchmark(const char* modelPath, const std::string& imagePath, bool useG
     std::cout << "Model initialized successfully!" << std::endl;
     
     // 测试不同批次大小
-    std::vector<int> batchSizes = {1, 16, 16, 16, 16, 16};
+    std::vector<int> batchSizes = {1, 16, 32， 64， 128};
     
     std::cout << "\n========================================" << std::endl;
     std::cout << "  Running performance tests..." << std::endl;
