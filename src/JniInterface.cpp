@@ -136,7 +136,7 @@ std::vector<cv::Mat> base64ToMatBatch(const ImageBase64* images, int count) {
     std::vector<cv::Mat> results(count);
     
     // 并行解码所有图片
-    #pragma omp parallel for num_threads(32)
+    #pragma omp parallel for num_threads(8)
     for (int i = 0; i < count; i++) {
         if (images[i].base64_str && images[i].str_len > 0) {
             results[i] = base64ToMat(images[i].base64_str, images[i].str_len, false);
