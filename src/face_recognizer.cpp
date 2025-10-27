@@ -351,6 +351,7 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
         std::vector<float> batchInputData(batchSize * singleImageSize);
         std::vector<bool> validFlags(batchSize, false);
         
+        // 串行处理，避免与 ONNX Runtime 线程冲突
         for (int i = 0; i < batchSize; i++) {
             int offset = i * singleImageSize;
             
