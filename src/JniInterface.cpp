@@ -8,12 +8,6 @@
 #include <memory>
 #include <chrono>
 
-// SIMD 优化支持
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-    #include <emmintrin.h>  // SSE2
-    #define BASE64_SIMD_ENABLED
-#endif
-
 // 全局变量：单例模式的识别器
 static std::unique_ptr<FaceRecognizer> g_recognizer = nullptr;
 static std::string g_modelPath = "";
@@ -49,93 +43,45 @@ static const uint8_t base64_decode_table[256] = {
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255
 };
 
-#ifdef BASE64_SIMD_ENABLED
-// SSE2 优化的批量解码（每次处理 16 字节）
-inline void base64_decode_simd_block(const uint8_t* in, uint8_t* out, const uint8_t* table) {
-    // 加载 16 字节输入
-    __m128i input = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in));
-    
-    // 使用 shuffle 优化查表（模拟并行查找）
-    // 这里简化处理，实际可以用更复杂的 SIMD shuffle
-    uint8_t temp[16];
-    _mm_storeu_si128(reinterpret_cast<__m128i*>(temp), input);
-    
-    // 批量查表
-    for (int i = 0; i < 16; i++) {
-        temp[i] = table[temp[i]];
-    }
-    
-    // 重组数据（4 个输入 -> 3 个输出）
-    // 简化版本，逐组处理
-    for (int i = 0; i < 12; i += 4) {
-        uint32_t combined = (temp[i] << 18) | (temp[i+1] << 12) | (temp[i+2] << 6) | temp[i+3];
-        out[(i/4)*3] = (combined >> 16) & 0xFF;
-        out[(i/4)*3 + 1] = (combined >> 8) & 0xFF;
-        out[(i/4)*3 + 2] = combined & 0xFF;
-    }
-}
-#endif
-
-// 高性能 Base64 解码（查找表 + SIMD）
+// 优化的 Base64 解码（使用查找表 + 批量处理）
 std::vector<unsigned char> base64_decode(const std::string& encoded_string) {
     const size_t in_len = encoded_string.size();
     if (in_len == 0) return std::vector<unsigned char>();
     
-    // 预分配输出缓冲区
-    size_t out_len = (in_len * 3) / 4;
+    // 预分配输出缓冲区（避免多次 realloc）
     std::vector<unsigned char> ret;
-    ret.reserve(out_len);
+    ret.reserve((in_len * 3) / 4 + 3);  // 预留足够空间
     
-    const uint8_t* in = reinterpret_cast<const uint8_t*>(encoded_string.data());
-    const uint8_t* in_end = in + in_len;
+    size_t i = 0;
     
-#ifdef BASE64_SIMD_ENABLED
-    // SIMD 快速路径：每次处理 16 字节（生成 12 字节输出）
-    uint8_t simd_out[12];
-    while (in + 16 <= in_end && in[0] != '=') {
-        base64_decode_simd_block(in, simd_out, base64_decode_table);
+    // 快速路径：批量处理 4 字节块
+    while (i + 4 <= in_len) {
+        // 检查 padding 或结束
+        if (encoded_string[i] == '=' || encoded_string[i] == '\0') break;
         
-        // 检查是否有 padding
-        bool has_padding = false;
-        for (int i = 0; i < 16; i++) {
-            if (in[i] == '=') {
-                has_padding = true;
-                break;
+        // 查表获取 4 个 6-bit 值
+        uint8_t b0 = base64_decode_table[static_cast<uint8_t>(encoded_string[i])];
+        uint8_t b1 = base64_decode_table[static_cast<uint8_t>(encoded_string[i+1])];
+        uint8_t b2 = base64_decode_table[static_cast<uint8_t>(encoded_string[i+2])];
+        uint8_t b3 = base64_decode_table[static_cast<uint8_t>(encoded_string[i+3])];
+        
+        // 检查非法字符（255 表示非法）
+        if (b0 == 255 || b1 == 255) break;
+        
+        // 第一个输出字节（总是存在）
+        ret.push_back((b0 << 2) | (b1 >> 4));
+        
+        // 第二个输出字节（如果不是 padding）
+        if (b2 != 254) {  // 254 表示 '='
+            ret.push_back((b1 << 4) | (b2 >> 2));
+            
+            // 第三个输出字节（如果不是 padding）
+            if (b3 != 254) {
+                ret.push_back((b2 << 6) | b3);
             }
         }
         
-        if (has_padding) break;
-        
-        // 添加到输出
-        for (int i = 0; i < 12; i++) {
-            ret.push_back(simd_out[i]);
-        }
-        
-        in += 16;
-    }
-#endif
-    
-    // 标准路径：处理剩余字节（每次 4 字节）
-    while (in + 4 <= in_end && in[0] != '=') {
-        uint32_t b0 = base64_decode_table[in[0]];
-        uint32_t b1 = base64_decode_table[in[1]];
-        uint32_t b2 = base64_decode_table[in[2]];
-        uint32_t b3 = base64_decode_table[in[3]];
-        
-        if ((b0 | b1) >= 254) break;
-        
-        uint32_t combined = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
-        
-        ret.push_back((combined >> 16) & 0xFF);
-        
-        if (b2 < 254) {
-            ret.push_back((combined >> 8) & 0xFF);
-            if (b3 < 254) {
-                ret.push_back(combined & 0xFF);
-            }
-        }
-        
-        in += 4;
+        i += 4;
     }
     
     return ret;
@@ -151,10 +97,10 @@ cv::Mat base64ToMat(const char* base64_str, int str_len) {
 
         auto t_base64_end = std::chrono::high_resolution_clock::now();
         double base64_decode_ms = std::chrono::duration<double, std::milli>(t_base64_end - t_base64_start).count();
-        std::cout << "[Time] Base64 decode: " << base64_decode_ms << " ms" << std::endl;
+        std::cout << "[Time] Base64 decode: " << base64_decode_ms << " ms (decoded " << decoded_data.size() << " bytes)" << std::endl;
         
         if (decoded_data.empty()) {
-            std::cerr << "Base64 decode failed: empty result" << std::endl;
+            std::cerr << "Base64 decode failed: empty result (input length: " << str_len << ")" << std::endl;
             return cv::Mat();
         }
 
@@ -166,7 +112,12 @@ cv::Mat base64ToMat(const char* base64_str, int str_len) {
         std::cout << "[Time] imdecode: " << imdecode_ms << " ms" << std::endl;
 
         if (img.empty()) {
-            std::cerr << "Failed to decode image from bytes" << std::endl;
+            std::cerr << "Failed to decode image from bytes (decoded " << decoded_data.size() 
+                      << " bytes, first 16 bytes: ";
+            for (size_t i = 0; i < std::min(size_t(16), decoded_data.size()); i++) {
+                std::cerr << std::hex << (int)decoded_data[i] << " ";
+            }
+            std::cerr << std::dec << ")" << std::endl;
         }
         
         return img;
