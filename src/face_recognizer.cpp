@@ -11,7 +11,9 @@ FaceRecognizer::FaceRecognizer(bool useGPU, int deviceId)
       useGPU_(useGPU),
       deviceId_(deviceId) {
     
-    sessionOptions_.SetIntraOpNumThreads(4);
+    // 减少线程数以避免与 OpenMP 冲突
+    sessionOptions_.SetIntraOpNumThreads(2);
+    sessionOptions_.SetInterOpNumThreads(2);
     sessionOptions_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
     
     // 如果启用 GPU，配置 GPU 选项
@@ -349,8 +351,6 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
         std::vector<float> batchInputData(batchSize * singleImageSize);
         std::vector<bool> validFlags(batchSize, false);
         
-        // 优化：使用 OpenMP 并行处理（如果可用）
-        #pragma omp parallel for
         for (int i = 0; i < batchSize; i++) {
             int offset = i * singleImageSize;
             
