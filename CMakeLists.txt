@@ -8,14 +8,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(USE_CUDA "Enable CUDA support for ONNX Runtime" OFF)
 option(USE_TENSORRT "Enable TensorRT support for ONNX Runtime" OFF)
 
-# OpenCV
-set(OpenCV_DIR "/home/xxx/codeSource/history/ai-center/3rdparty/opencv/lib/cmake/opencv4")
+
 find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 # ONNX Runtime
 # 请根据你的ONNX Runtime安装路径修改
-set(ONNXRUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime")
+# set(ONNXRUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime")
 
 if(NOT ONNXRUNTIME_DIR)
     message(WARNING "ONNXRUNTIME_DIR not set. Please set it to your ONNX Runtime installation path.")

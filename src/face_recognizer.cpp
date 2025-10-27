@@ -497,11 +497,11 @@ void FaceRecognizer::setupGPU() {
         std::cout << "TensorRT provider enabled (device: " << deviceId_ << ")" << std::endl;
 #endif
 
-        if (!defined(USE_CUDA) && !defined(USE_TENSORRT)) {
-            std::cerr << "Warning: GPU requested but not compiled with CUDA/TensorRT support!" << std::endl;
-            std::cerr << "Please recompile with -DUSE_CUDA=ON or -DUSE_TENSORRT=ON" << std::endl;
-            std::cerr << "Falling back to CPU execution" << std::endl;
-        }
+#if !defined(USE_CUDA) && !defined(USE_TENSORRT)
+        std::cerr << "Warning: GPU requested but not compiled with CUDA/TensorRT support!" << std::endl;
+        std::cerr << "Please recompile with -DUSE_CUDA=ON or -DUSE_TENSORRT=ON" << std::endl;
+        std::cerr << "Falling back to CPU execution" << std::endl;
+#endif
         
     } catch (const Ort::Exception& e) {
         std::cerr << "Error setting up GPU: " << e.what() << std::endl;
