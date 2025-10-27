@@ -68,13 +68,7 @@ std::vector<unsigned char> base64_decode(const std::string& encoded_string) {
 cv::Mat base64ToMat(const char* base64_str, int str_len) {
     try {
         std::string encoded_string(base64_str, str_len);
-        std::vector<unsigned char> decoded_data = base64_decode(encoded_string);
-        
-        if (decoded_data.empty()) {
-            std::cerr << "Base64 decode failed: empty result" << std::endl;
-            return cv::Mat();
-        }
-        
+        std::vector<unsigned char> decoded_data(encoded_string.begin(), encoded_string.end());
         // 使用 imdecode 将字节流转换为图像
         cv::Mat img = cv::imdecode(cv::Mat(decoded_data), cv::IMREAD_COLOR);
         
