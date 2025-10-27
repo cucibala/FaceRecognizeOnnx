@@ -33,10 +33,6 @@ extern "C" int FR_ProcessBatchImages(
 // 结果释放接口：由Java调用，释放C++分配的内存
 extern "C" void FR_FreeBatchResults(BatchImageOutput* output);
 
-// 强制处理缓冲区中的剩余图片（少于1024张时调用）
-// 返回值：0=成功，非0=错误码
-extern "C" int FR_FlushBatch();
-
 // 初始化接口：加载模型（可选，也可在第一次调用时自动加载）
 extern "C" int FR_Initialize(const char* model_path);
 

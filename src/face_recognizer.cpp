@@ -300,10 +300,8 @@ void FaceRecognizer::normalize(std::vector<float>& feature) {
 }
 
 std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const std::vector<cv::Mat>& images) {
-    static std::mutex mutex;
-    std::unique_lock<std::mutex> lock(mutex);
-
     std::vector<std::vector<float>> features;
+    
     if (!session_) {
         std::cerr << "Model not loaded!" << std::endl;
         return features;
