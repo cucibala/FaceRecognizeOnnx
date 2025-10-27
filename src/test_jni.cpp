@@ -16,7 +16,7 @@ std::string imageToBase64(const std::string& imagePath) {
 
     std::string result;
     result.resize(image.total() * 3 + 1);
-    memcpy(result.data(), image.data(), image.total() * 3);
+    memcpy(result.data(), image.data, image.total() * 3);
     return result;
 }
 
