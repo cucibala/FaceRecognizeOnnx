@@ -507,11 +507,12 @@ void FaceRecognizer::setupGPU() {
             trt_options.trt_engine_cache_path = "./trt_cache";
             
             // TensorRT 详细配置
-            trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024; // 2GB
+            // trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024; // 2GB
             trt_options.trt_fp16_enable = 1;  // 启用 FP16
             trt_options.trt_int8_enable = 0;   // 禁用 INT8
             trt_options.trt_dla_enable = 0;    // 禁用 DLA
             trt_options.trt_dump_subgraphs = 0;
+            trtOpts.trt_engine_decryption_enable = false;
             
             sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
             std::cout << "✓ TensorRT provider added successfully!" << std::endl;
