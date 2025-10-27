@@ -206,11 +206,8 @@ extern "C" int FR_ProcessBatchImages(
                 result.features = new float[result.feature_dim];
                 std::memcpy(result.features, allFeatures[i].data(), result.feature_dim * sizeof(float));
                 result.status = 0; // 成功
-                
-                std::cout << "  Image " << i << " processed successfully (dim: " << result.feature_dim << ")" << std::endl;
             } else {
                 result.status = -12; // 特征提取失败
-                std::cerr << "  Feature extraction failed for image " << i << std::endl;
             }
         }
         

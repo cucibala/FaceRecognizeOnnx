@@ -378,8 +378,6 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
             }
         }
         
-        std::cout << "Batch input data size: " << batchInputData.size() << std::endl;
-        
         // 创建批量输入tensor
         std::vector<int64_t> inputShapeBatch = {static_cast<int64_t>(batchSize), 3, inputHeight_, inputWidth_};
         auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
@@ -388,34 +386,20 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
             inputShapeBatch.data(), inputShapeBatch.size()
         );
         
-        // 批量推理
-        std::cout << "Running batch inference..." << std::endl;
         auto outputTensors = session_->Run(
             Ort::RunOptions{nullptr},
             inputNamePtrs_.data(), &inputTensor, 1,
             outputNamePtrs_.data(), outputNamePtrs_.size()
         );
-        
-        std::cout << "Batch inference completed" << std::endl;
-        
+
         // 获取输出
         float* outputData = outputTensors[0].GetTensorMutableData<float>();
         auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
-        
-        std::cout << "Output shape: [";
-        for (size_t i = 0; i < outputShape.size(); i++) {
-            std::cout << outputShape[i];
-            if (i < outputShape.size() - 1) std::cout << ", ";
-        }
-        std::cout << "]" << std::endl;
         
         // 解析每个图片的特征
         if (outputShape.size() >= 2) {
             int outputBatchSize = static_cast<int>(outputShape[0]);
             int featureDim = static_cast<int>(outputShape[1]);
-            
-            std::cout << "Extracting " << outputBatchSize << " features, dim: " << featureDim << std::endl;
-            
             for (int i = 0; i < outputBatchSize && i < batchSize; i++) {
                 std::vector<float> feature;
                 
