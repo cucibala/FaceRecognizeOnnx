@@ -138,33 +138,27 @@ void FaceDetector::preprocess(const cv::Mat& image, std::vector<float>& inputDat
 }
 
 std::vector<FaceBox> FaceDetector::detect(const cv::Mat& image, float scoreThreshold, float nmsThreshold) {
-    std::vector<FaceBox> faces;
+    std::vector<FaceBox> allBoxes;
     
     if (!session_) {
         std::cerr << "Model not loaded!" << std::endl;
-        return faces;
+        return allBoxes;
     }
     
     // 验证输入图像
-    if (image.empty()) {
-        std::cerr << "Input image is empty!" << std::endl;
-        return faces;
-    }
-    
-    if (image.cols <= 0 || image.rows <= 0) {
-        std::cerr << "Invalid image dimensions: " << image.cols << "x" << image.rows << std::endl;
-        return faces;
+    if (image.empty() || image.cols <= 0 || image.rows <= 0) {
+        std::cerr << "Invalid input image!" << std::endl;
+        return allBoxes;
     }
     
     // 预处理
     std::vector<float> inputData;
-    float scale;
-    preprocess(image, inputData, scale);
+    float det_scale;
+    preprocess(image, inputData, det_scale);
     
-    // 检查预处理结果
     if (inputData.empty()) {
         std::cerr << "Preprocessing failed!" << std::endl;
-        return faces;
+        return allBoxes;
     }
     
     // 创建输入tensor
@@ -183,149 +177,141 @@ std::vector<FaceBox> FaceDetector::detect(const cv::Mat& image, float scoreThres
             outputNamePtrs_.data(), outputNamePtrs_.size()
         );
         
-        // 处理输出
         if (outputTensors.size() == 0) {
-            std::cerr << "No output tensors received!" << std::endl;
-            return faces;
+            std::cerr << "No output tensors!" << std::endl;
+            return allBoxes;
         }
         
-        std::cout << "Number of output tensors: " << outputTensors.size() << std::endl;
+        // 判断模型配置
+        size_t num_outputs = outputTensors.size();
+        int fmc = 0;  // Feature map count
+        bool use_kps = false;
+        std::vector<int> feat_stride_fpn;
         
-        // 打印所有输出的形状
-        for (size_t i = 0; i < outputTensors.size(); i++) {
-            auto shape = outputTensors[i].GetTensorTypeAndShapeInfo().GetShape();
-            std::cout << "Output " << i << " shape: [";
-            for (size_t j = 0; j < shape.size(); j++) {
-                std::cout << shape[j];
-                if (j < shape.size() - 1) std::cout << ", ";
+        if (num_outputs == 6) {
+            fmc = 3;
+            feat_stride_fpn = {8, 16, 32};
+        } else if (num_outputs == 9) {
+            fmc = 3;
+            feat_stride_fpn = {8, 16, 32};
+            use_kps = true;
+        } else if (num_outputs == 10) {
+            fmc = 5;
+            feat_stride_fpn = {8, 16, 32, 64, 128};
+        } else if (num_outputs == 15) {
+            fmc = 5;
+            feat_stride_fpn = {8, 16, 32, 64, 128};
+            use_kps = true;
+        } else {
+            std::cerr << "Unsupported number of outputs: " << num_outputs << std::endl;
+            return allBoxes;
+        }
+        
+        std::cout << "SCRFD outputs: " << num_outputs << ", fmc=" << fmc << ", use_kps=" << use_kps << std::endl;
+        
+        // 处理每个 scale 的输出
+        for (int idx = 0; idx < fmc; idx++) {
+            int stride = feat_stride_fpn[idx];
+            
+            // 获取 scores, bbox_preds, kps_preds
+            auto scores_tensor = outputTensors[idx];
+            auto bbox_preds_tensor = outputTensors[idx + fmc];
+            
+            auto scores_shape = scores_tensor.GetTensorTypeAndShapeInfo().GetShape();
+            float* scores_data = scores_tensor.GetTensorMutableData<float>();
+            float* bbox_preds_data = bbox_preds_tensor.GetTensorMutableData<float>();
+            
+            float* kps_preds_data = nullptr;
+            if (use_kps) {
+                kps_preds_data = outputTensors[idx + fmc * 2].GetTensorMutableData<float>();
             }
-            std::cout << "]" << std::endl;
+            
+            // 计算特征图尺寸
+            int height = inputHeight_ / stride;
+            int width = inputWidth_ / stride;
+            int num_anchors = height * width;
+            
+            // 生成 anchor centers
+            std::vector<cv::Point2f> anchor_centers;
+            for (int h = 0; h < height; h++) {
+                for (int w = 0; w < width; w++) {
+                    anchor_centers.push_back(cv::Point2f(w * stride, h * stride));
+                }
+            }
+            
+            // 处理每个 anchor
+            for (int i = 0; i < num_anchors; i++) {
+                float score = scores_data[i];
+                
+                if (score >= scoreThreshold) {
+                    FaceBox face;
+                    
+                    // 解码边界框
+                    float bbox_pred[4] = {
+                        bbox_preds_data[i * 4] * stride,
+                        bbox_preds_data[i * 4 + 1] * stride,
+                        bbox_preds_data[i * 4 + 2] * stride,
+                        bbox_preds_data[i * 4 + 3] * stride
+                    };
+                    face.box = distance2bbox(anchor_centers[i], bbox_pred, det_scale);
+                    face.score = score;
+                    
+                    // 解码关键点
+                    if (use_kps && kps_preds_data) {
+                        float kps_pred[10];
+                        for (int k = 0; k < 10; k++) {
+                            kps_pred[k] = kps_preds_data[i * 10 + k] * stride;
+                        }
+                        distance2kps(anchor_centers[i], kps_pred, face.landmarks, 5, det_scale);
+                    }
+                    
+                    allBoxes.push_back(face);
+                }
+            }
         }
         
-        // SCRFD 有多个输出 (scores, bboxes, kps)，需要分别处理
-        // 这里使用简化的处理：假设第一个输出包含所有信息
-        float* outputData = outputTensors[0].GetTensorMutableData<float>();
-        auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
+        std::cout << "Found " << allBoxes.size() << " faces before NMS" << std::endl;
         
-        size_t outputSize = 1;
-        for (auto dim : outputShape) {
-            outputSize *= dim;
-        }
+        // NMS
+        nms(allBoxes, nmsThreshold);
         
-        std::vector<float> outputs(outputData, outputData + outputSize);
-        faces = postprocess(outputs, outputShape, scale, scoreThreshold, nmsThreshold);
+        std::cout << "Found " << allBoxes.size() << " faces after NMS" << std::endl;
         
     } catch (const Ort::Exception& e) {
         std::cerr << "Error during inference: " << e.what() << std::endl;
     }
     
-    return faces;
+    return allBoxes;
+}
+
+// SCRFD 核心函数：distance2bbox（从 distance 解码为 bbox）
+cv::Rect distance2bbox(const cv::Point2f& anchor_center, const float* distance, float scale) {
+    float x1 = (anchor_center.x - distance[0]) / scale;
+    float y1 = (anchor_center.y - distance[1]) / scale;
+    float x2 = (anchor_center.x + distance[2]) / scale;
+    float y2 = (anchor_center.y + distance[3]) / scale;
+    return cv::Rect(static_cast<int>(x1), static_cast<int>(y1), 
+                    static_cast<int>(x2 - x1), static_cast<int>(y2 - y1));
+}
+
+// SCRFD 核心函数：distance2kps（从 distance 解码为关键点）
+void distance2kps(const cv::Point2f& anchor_center, const float* distance, 
+                  cv::Point2f* kps, int num_kps, float scale) {
+    for (int i = 0; i < num_kps; i++) {
+        kps[i].x = (anchor_center.x + distance[i * 2]) / scale;
+        kps[i].y = (anchor_center.y + distance[i * 2 + 1]) / scale;
+    }
 }
 
 std::vector<FaceBox> FaceDetector::postprocess(const std::vector<float>& outputs,
                                                 const std::vector<int64_t>& outputShape,
                                                 float scale, float scoreThreshold, float nmsThreshold) {
     std::vector<FaceBox> boxes;
-    if (outputShape.size() > 0) {
-        std::cout << "Shape dimensions: ";
-        for (auto dim : outputShape) {
-            std::cout << dim << " ";
-        }
-        std::cout << std::endl;
-    }
     
-    // SCRFD输出格式可能是:
-    // 1. [batch, num_anchors, 15] (x1, y1, x2, y2, score, 10 landmarks)
-    // 2. [batch, num_anchors, num_classes] 等多种格式
-    
-    if (outputShape.size() == 3 && outputShape[2] >= 15) {
-        // 格式: [batch, num_anchors, 15+]
-        int numAnchors = static_cast<int>(outputShape[1]);
-        int featDim = static_cast<int>(outputShape[2]);
-        for (int i = 0; i < numAnchors; i++) {
-            int offset = i * featDim;
-            float score = outputs[offset + 4];
-            
-            if (score > scoreThreshold) {
-                FaceBox face;
-                float x1 = outputs[offset + 0] / scale;
-                float y1 = outputs[offset + 1] / scale;
-                float x2 = outputs[offset + 2] / scale;
-                float y2 = outputs[offset + 3] / scale;
-                
-                face.box = cv::Rect(
-                    static_cast<int>(x1),
-                    static_cast<int>(y1),
-                    static_cast<int>(x2 - x1),
-                    static_cast<int>(y2 - y1)
-                );
-                face.score = score;
-                
-                // 提取关键点
-                if (featDim >= 15) {
-                    for (int j = 0; j < 5; j++) {
-                        face.landmarks[j].x = outputs[offset + 5 + j * 2] / scale;
-                        face.landmarks[j].y = outputs[offset + 5 + j * 2 + 1] / scale;
-                    }
-                }
-                
-                boxes.push_back(face);
-            }
-        }
-    } else if (outputShape.size() == 2) {
-        // 格式: [num_detections, 15+]
-        int numDetections = static_cast<int>(outputShape[0]);
-        int featDim = static_cast<int>(outputShape[1]);
-        for (int i = 0; i < numDetections; i++) {
-            int offset = i * featDim;
-            
-            // 根据特征维度判断格式
-            float score;
-            float x1, y1, x2, y2;
-            
-            if (featDim >= 15) {
-                // 假设格式: x1, y1, x2, y2, score, kps...
-                x1 = outputs[offset + 0] / scale;
-                y1 = outputs[offset + 1] / scale;
-                x2 = outputs[offset + 2] / scale;
-                y2 = outputs[offset + 3] / scale;
-                score = outputs[offset + 4];
-            } else {
-                // 简化格式
-                continue;
-            }
-            
-            if (score > scoreThreshold) {
-                FaceBox face;
-                face.box = cv::Rect(
-                    static_cast<int>(x1),
-                    static_cast<int>(y1),
-                    static_cast<int>(x2 - x1),
-                    static_cast<int>(y2 - y1)
-                );
-                face.score = score;
-                
-                // 提取关键点
-                if (featDim >= 15) {
-                    for (int j = 0; j < 5; j++) {
-                        face.landmarks[j].x = outputs[offset + 5 + j * 2] / scale;
-                        face.landmarks[j].y = outputs[offset + 5 + j * 2 + 1] / scale;
-                    }
-                }
-                
-                boxes.push_back(face);
-            }
-        }
-    } else {
-        std::cout << "Warning: Unexpected output shape format" << std::endl;
-    }
-    
-    std::cout << "Found " << boxes.size() << " faces before NMS" << std::endl;
-    
-    // NMS
-    nms(boxes, nmsThreshold);
-    
-    std::cout << "Found " << boxes.size() << " faces after NMS" << std::endl;
+    // ！！！这是错误的实现 - SCRFD 模型有多个输出头
+    // 你需要在 detect() 函数中正确处理所有输出
+    std::cerr << "ERROR: postprocess should not be called with single output!" << std::endl;
+    std::cerr << "SCRFD has multiple outputs (scores, bbox_preds, kps_preds for each scale)" << std::endl;
     
     return boxes;
 }
