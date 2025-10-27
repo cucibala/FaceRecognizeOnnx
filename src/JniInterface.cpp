@@ -150,6 +150,7 @@ extern "C" int FR_ProcessBatchImages(
     }
     
     try {
+        auto decodeStart = std::chrono::high_resolution_clock::now();
         // 分配结果数组
         output->count = input->count;
         output->results = new ImageResult[input->count];
@@ -187,6 +188,10 @@ extern "C" int FR_ProcessBatchImages(
             validIndices.push_back(i);
         }
         
+        auto decodeEnd = std::chrono::high_resolution_clock::now();
+        auto decodeDuration = std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart);
+        std::cout << "Decode time: " << decodeDuration.count() << " ms" << std::endl;
+
         auto extractStart = std::chrono::high_resolution_clock::now();
         // 批量提取特征
         auto allFeatures = g_recognizer->extractFeaturesBatchSimple(images);
