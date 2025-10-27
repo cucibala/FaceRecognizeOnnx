@@ -1,5 +1,6 @@
 #include <iostream>
 #include <opencv2/opencv.hpp>
+#include <chrono>
 #include "face_detector.h"
 #include "face_recognizer.h"
 
@@ -176,26 +177,96 @@ void testRecognitionSimple(FaceRecognizer& recognizer,
     } else {
         std::cout << "结果: 不同人 (相似度: " << similarity << " <= " << threshold << ")" << std::endl;
     }
+}
+
+void testBatchProcessing(FaceRecognizer& recognizer, const std::vector<std::string>& imagePaths) {
+    std::cout << "\n=== 测试批量处理 ===" << std::endl;
+    
+    // 加载所有图片
+    std::vector<cv::Mat> images;
+    std::cout << "Loading " << imagePaths.size() << " images..." << std::endl;
+    
+    for (size_t i = 0; i < imagePaths.size(); i++) {
+        cv::Mat img = cv::imread(imagePaths[i]);
+        if (img.empty()) {
+            std::cerr << "  Failed to load: " << imagePaths[i] << std::endl;
+            images.push_back(cv::Mat()); // 添加空图占位
+        } else {
+            std::cout << "  Loaded " << i << ": " << imagePaths[i] 
+                      << " (" << img.cols << "x" << img.rows << ")" << std::endl;
+            images.push_back(img);
+        }
+    }
+    
+    if (images.empty()) {
+        std::cerr << "No valid images to process" << std::endl;
+        return;
+    }
+    
+    // 批量提取特征
+    std::cout << "\nExtracting features in batch mode..." << std::endl;
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    auto features = recognizer.extractFeaturesBatchSimple(images);
+    
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    
+    std::cout << "\nBatch processing completed in " << duration.count() << " ms" << std::endl;
+    std::cout << "Average time per image: " 
+              << (features.empty() ? 0 : duration.count() / features.size()) << " ms" << std::endl;
     
     // 显示结果
-    // cv::Mat resized1, resized2;
-    // cv::resize(image1, resized1, cv::Size(300, 300));
-    // cv::resize(image2, resized2, cv::Size(300, 300));
+    std::cout << "\nResults:" << std::endl;
+    int successCount = 0;
+    for (size_t i = 0; i < features.size(); i++) {
+        std::cout << "  Image " << i << ": ";
+        if (!features[i].empty()) {
+            std::cout << "SUCCESS (dim: " << features[i].size() << ")" << std::endl;
+            successCount++;
+        } else {
+            std::cout << "FAILED" << std::endl;
+        }
+    }
     
-    // // 添加文本
-    // std::string text = "Similarity: " + std::to_string(similarity).substr(0, 5);
-    // cv::putText(resized1, "Image 1", cv::Point(10, 30), 
-    //             cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
-    // cv::putText(resized2, "Image 2", cv::Point(10, 30), 
-    //             cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
-    // cv::putText(resized2, text, cv::Point(10, 280), 
-    //             cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
+    std::cout << "\nSuccess rate: " << successCount << "/" << features.size() << std::endl;
     
-    // cv::Mat combined;
-    // cv::hconcat(resized1, resized2, combined);
-    
-    // cv::imshow("人脸比对结果（简化模式）", combined);
-    // cv::waitKey(0);
+    // 如果有至少2个成功的结果，进行比对
+    if (successCount >= 2) {
+        std::cout << "\nComputing pairwise similarities:" << std::endl;
+        
+        // 找出所有成功的索引
+        std::vector<int> validIndices;
+        for (size_t i = 0; i < features.size(); i++) {
+            if (!features[i].empty()) {
+                validIndices.push_back(i);
+            }
+        }
+        
+        // 计算前几对的相似度
+        int maxPairs = std::min(5, static_cast<int>(validIndices.size() * (validIndices.size() - 1) / 2));
+        int pairCount = 0;
+        
+        for (size_t i = 0; i < validIndices.size() && pairCount < maxPairs; i++) {
+            for (size_t j = i + 1; j < validIndices.size() && pairCount < maxPairs; j++) {
+                int idx1 = validIndices[i];
+                int idx2 = validIndices[j];
+                
+                float similarity = recognizer.compareFaces(features[idx1], features[idx2]);
+                std::cout << "  Image " << idx1 << " vs Image " << idx2 
+                          << ": " << similarity;
+                
+                if (similarity > 0.6f) {
+                    std::cout << " (Same person)";
+                } else {
+                    std::cout << " (Different)";
+                }
+                std::cout << std::endl;
+                
+                pairCount++;
+            }
+        }
+    }
 }
 
 int main(int argc, char** argv) {
@@ -228,12 +299,12 @@ int main(int argc, char** argv) {
         std::cout << "1. 人脸检测: " << argv[0] << " detect <image_path>" << std::endl;
         std::cout << "2. 人脸比对: " << argv[0] << " compare <image1_path> <image2_path>" << std::endl;
         std::cout << "3. 简化比对: " << argv[0] << " simple <image1_path> <image2_path>" << std::endl;
-        std::cout << "4. 实时检测: " << argv[0] << " webcam" << std::endl;
+        std::cout << "4. 批量处理: " << argv[0] << " batch <image1> <image2> [image3] ..." << std::endl;
         std::cout << "\n示例:" << std::endl;
         std::cout << "  " << argv[0] << " detect test.jpg" << std::endl;
         std::cout << "  " << argv[0] << " compare person1.jpg person2.jpg" << std::endl;
         std::cout << "  " << argv[0] << " simple person1.jpg person2.jpg  # 直接resize，不检测人脸" << std::endl;
-        std::cout << "  " << argv[0] << " webcam" << std::endl;
+        std::cout << "  " << argv[0] << " batch img1.jpg img2.jpg img3.jpg  # 批量处理" << std::endl;
         return 0;
     }
     
@@ -245,6 +316,12 @@ int main(int argc, char** argv) {
         testRecognition(detector, recognizer, argv[2], argv[3]);
     } else if (mode == "simple" && argc >= 4) {
         testRecognitionSimple(recognizer, argv[2], argv[3]);
+    } else if (mode == "batch" && argc >= 3) {
+        std::vector<std::string> imagePaths;
+        for (int i = 2; i < argc; i++) {
+            imagePaths.push_back(argv[i]);
+        }
+        testBatchProcessing(recognizer, imagePaths);
     } else {
         std::cerr << "无效的命令或参数" << std::endl;
         return -1;

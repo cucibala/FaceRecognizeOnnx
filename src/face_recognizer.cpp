@@ -317,6 +317,152 @@ void FaceRecognizer::normalize(std::vector<float>& feature) {
     }
 }
 
+std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const std::vector<cv::Mat>& images) {
+    std::vector<std::vector<float>> features;
+    
+    if (!session_) {
+        std::cerr << "Model not loaded!" << std::endl;
+        return features;
+    }
+    
+    if (images.empty()) {
+        std::cerr << "No images to process!" << std::endl;
+        return features;
+    }
+    
+    int batchSize = images.size();
+    std::cout << "Processing batch of " << batchSize << " images" << std::endl;
+    
+    try {
+        // 预处理所有图片
+        std::vector<float> batchInputData;
+        batchInputData.reserve(batchSize * 3 * inputHeight_ * inputWidth_);
+        
+        std::vector<bool> validFlags(batchSize, false);
+        
+        for (int i = 0; i < batchSize; i++) {
+            if (images[i].empty()) {
+                std::cerr << "  Image " << i << " is empty, skipping" << std::endl;
+                // 添加空数据占位
+                std::vector<float> emptyData(3 * inputHeight_ * inputWidth_, 0.0f);
+                batchInputData.insert(batchInputData.end(), emptyData.begin(), emptyData.end());
+                continue;
+            }
+            
+            std::cout << "  Preprocessing image " << i << ": " 
+                      << images[i].cols << "x" << images[i].rows << std::endl;
+            
+            // Resize
+            cv::Mat resized;
+            cv::resize(images[i], resized, cv::Size(inputWidth_, inputHeight_));
+            
+            // 预处理
+            std::vector<float> inputData;
+            preprocess(resized, inputData);
+            
+            if (inputData.empty()) {
+                std::cerr << "  Preprocessing failed for image " << i << std::endl;
+                std::vector<float> emptyData(3 * inputHeight_ * inputWidth_, 0.0f);
+                batchInputData.insert(batchInputData.end(), emptyData.begin(), emptyData.end());
+            } else {
+                batchInputData.insert(batchInputData.end(), inputData.begin(), inputData.end());
+                validFlags[i] = true;
+            }
+        }
+        
+        std::cout << "Batch input data size: " << batchInputData.size() << std::endl;
+        
+        // 创建批量输入tensor
+        std::vector<int64_t> inputShapeBatch = {static_cast<int64_t>(batchSize), 3, inputHeight_, inputWidth_};
+        auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
+            memoryInfo, batchInputData.data(), batchInputData.size(),
+            inputShapeBatch.data(), inputShapeBatch.size()
+        );
+        
+        // 批量推理
+        std::cout << "Running batch inference..." << std::endl;
+        auto outputTensors = session_->Run(
+            Ort::RunOptions{nullptr},
+            inputNamePtrs_.data(), &inputTensor, 1,
+            outputNamePtrs_.data(), outputNamePtrs_.size()
+        );
+        
+        std::cout << "Batch inference completed" << std::endl;
+        
+        // 获取输出
+        float* outputData = outputTensors[0].GetTensorMutableData<float>();
+        auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
+        
+        std::cout << "Output shape: [";
+        for (size_t i = 0; i < outputShape.size(); i++) {
+            std::cout << outputShape[i];
+            if (i < outputShape.size() - 1) std::cout << ", ";
+        }
+        std::cout << "]" << std::endl;
+        
+        // 解析每个图片的特征
+        if (outputShape.size() >= 2) {
+            int outputBatchSize = static_cast<int>(outputShape[0]);
+            int featureDim = static_cast<int>(outputShape[1]);
+            
+            std::cout << "Extracting " << outputBatchSize << " features, dim: " << featureDim << std::endl;
+            
+            for (int i = 0; i < outputBatchSize && i < batchSize; i++) {
+                std::vector<float> feature;
+                
+                if (validFlags[i]) {
+                    // 提取该图片的特征
+                    int offset = i * featureDim;
+                    feature.assign(outputData + offset, outputData + offset + featureDim);
+                    
+                    // L2归一化
+                    normalize(feature);
+                    
+                    std::cout << "  Image " << i << ": feature extracted successfully" << std::endl;
+                } else {
+                    std::cout << "  Image " << i << ": skipped (invalid input)" << std::endl;
+                }
+                
+                features.push_back(feature);
+            }
+        }
+        
+        std::cout << "Batch processing completed: " << features.size() << " results" << std::endl;
+        
+    } catch (const Ort::Exception& e) {
+        std::cerr << "Error during batch feature extraction: " << e.what() << std::endl;
+    }
+    
+    return features;
+}
+
+std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatch(const std::vector<cv::Mat>& images) {
+    std::vector<std::vector<float>> features;
+    
+    if (!session_) {
+        std::cerr << "Model not loaded!" << std::endl;
+        return features;
+    }
+    
+    if (images.empty()) {
+        std::cerr << "No images to process!" << std::endl;
+        return features;
+    }
+    
+    std::cout << "Batch processing " << images.size() << " images (non-batch fallback)" << std::endl;
+    
+    // 注意：由于每张图片可能需要不同的对齐参数，
+    // 这里使用逐个处理的方式（未来可以优化为真正的批处理）
+    for (size_t i = 0; i < images.size(); i++) {
+        std::cout << "  Processing image " << i << std::endl;
+        std::vector<float> feature = extractFeatureSimple(images[i]);
+        features.push_back(feature);
+    }
+    
+    return features;
+}
+
 float FaceRecognizer::compareFaces(const std::vector<float>& feature1, const std::vector<float>& feature2) {
     if (feature1.size() != feature2.size() || feature1.empty()) {
         return 0.0f;

@@ -146,7 +146,10 @@ extern "C" int FR_ProcessBatchImages(
         output->count = input->count;
         output->results = new ImageResult[input->count];
         
-        // 逐个处理图片
+        // 解码所有图片
+        std::vector<cv::Mat> images;
+        std::vector<int> validIndices;
+        
         for (int i = 0; i < input->count; i++) {
             ImageResult& result = output->results[i];
             const ImageBase64& img_input = input->images[i];
@@ -156,12 +159,11 @@ extern "C" int FR_ProcessBatchImages(
             result.feature_dim = 0;
             result.status = -1;
             
-            std::cout << "Processing image " << (i + 1) << "/" << input->count << std::endl;
-            
             // 验证输入
             if (!img_input.base64_str || img_input.str_len <= 0) {
                 std::cerr << "  Invalid base64 string for image " << i << std::endl;
                 result.status = -10;
+                images.push_back(cv::Mat()); // 占位
                 continue;
             }
             
@@ -171,29 +173,35 @@ extern "C" int FR_ProcessBatchImages(
             if (image.empty()) {
                 std::cerr << "  Failed to decode image " << i << std::endl;
                 result.status = -11;
+                images.push_back(cv::Mat()); // 占位
                 continue;
             }
             
-            std::cout << "  Image size: " << image.cols << "x" << image.rows << std::endl;
+            std::cout << "  Image " << i << " decoded: " << image.cols << "x" << image.rows << std::endl;
+            images.push_back(image);
+            validIndices.push_back(i);
+        }
+        
+        // 批量提取特征
+        std::cout << "Running batch feature extraction..." << std::endl;
+        auto allFeatures = g_recognizer->extractFeaturesBatchSimple(images);
+        
+        // 将结果复制到输出
+        for (size_t i = 0; i < allFeatures.size() && i < static_cast<size_t>(input->count); i++) {
+            ImageResult& result = output->results[i];
             
-            // 提取特征（使用简化模式，直接 resize）
-            std::vector<float> features = g_recognizer->extractFeatureSimple(image);
-            
-            if (features.empty()) {
+            if (!allFeatures[i].empty()) {
+                // 分配内存并复制特征
+                result.feature_dim = allFeatures[i].size();
+                result.features = new float[result.feature_dim];
+                std::memcpy(result.features, allFeatures[i].data(), result.feature_dim * sizeof(float));
+                result.status = 0; // 成功
+                
+                std::cout << "  Image " << i << " processed successfully (dim: " << result.feature_dim << ")" << std::endl;
+            } else {
+                result.status = -12; // 特征提取失败
                 std::cerr << "  Feature extraction failed for image " << i << std::endl;
-                result.status = -12;
-                continue;
             }
-            
-            std::cout << "  Extracted features, dim: " << features.size() << std::endl;
-            
-            // 分配内存并复制特征
-            result.feature_dim = features.size();
-            result.features = new float[result.feature_dim];
-            std::memcpy(result.features, features.data(), result.feature_dim * sizeof(float));
-            result.status = 0; // 成功
-            
-            std::cout << "  Image " << (i + 1) << " processed successfully" << std::endl;
         }
         
         std::cout << "Batch processing completed" << std::endl;
