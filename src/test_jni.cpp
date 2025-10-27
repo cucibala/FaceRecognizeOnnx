@@ -99,53 +99,87 @@ void runBenchmark(const char* modelPath, const std::string& imagePath, bool useG
     std::vector<BenchmarkResult> results;
     
     for (int batchSize : batchSizes) {
-        // 重新运行一次获取准确结果（排除首次缓存影响）
-        std::cout << "\n  Running again for accurate measurement..." << std::endl;
+        std::cout << "\n========================================" << std::endl;
+        std::cout << "  Testing batch size: " << batchSize << " (50 iterations)" << std::endl;
+        std::cout << "========================================" << std::endl;
 
         std::string base64 = imageToBase64(imagePath);
+        
+        // 准备统计数据
+        long long totalImgProcTime = 0;
+        long long totalInferTime = 0;
+        int totalSuccess = 0;
+        const int iterations = 50;
+        
+        for (int iter = 0; iter < iterations; iter++) {
+            // 计时: 图片准备阶段
+            auto imgProcStart = std::chrono::high_resolution_clock::now();
+            std::vector<std::string> base64Strings(batchSize, base64);
+            std::vector<ImageBase64> images;
+            for (int i = 0; i < batchSize; i++) {
+                ImageBase64 img;
+                img.base64_str = base64Strings[i].c_str();
+                img.str_len = base64Strings[i].length();
+                images.push_back(img);
+            }
+            BatchImageInput input;
+            input.images = images.data();
+            input.count = images.size();
+            auto imgProcEnd = std::chrono::high_resolution_clock::now();
+            auto imgProcDuration = std::chrono::duration_cast<std::chrono::milliseconds>(imgProcEnd - imgProcStart);
 
-        // 计时: 图片准备阶段
-        auto imgProcStart = std::chrono::high_resolution_clock::now();
-        std::vector<std::string> base64Strings(batchSize, base64);
-        std::vector<ImageBase64> images;
-        for (int i = 0; i < batchSize; i++) {
-            ImageBase64 img;
-            img.base64_str = base64Strings[i].c_str();
-            img.str_len = base64Strings[i].length();
-            images.push_back(img);
+            // 计时: 推理阶段
+            BatchImageOutput output;
+            output.results = nullptr;
+            output.count = 0;
+            auto inferStart = std::chrono::high_resolution_clock::now();
+            FR_ProcessBatchImages(&input, &output);
+            auto inferEnd = std::chrono::high_resolution_clock::now();
+            auto inferDuration = std::chrono::duration_cast<std::chrono::milliseconds>(inferEnd - inferStart);
+
+            int successCount = 0;
+            for (int i = 0; i < output.count; i++) {
+                if (output.results[i].status == 0) successCount++;
+            }
+
+            totalImgProcTime += imgProcDuration.count();
+            totalInferTime += inferDuration.count();
+            totalSuccess += successCount;
+
+            FR_FreeBatchResults(&output);
+            
+            // 每10次迭代显示进度
+            if ((iter + 1) % 10 == 0) {
+                std::cout << "  Progress: " << (iter + 1) << "/" << iterations << " iterations" << std::endl;
+            }
         }
-        BatchImageInput input;
-        input.images = images.data();
-        input.count = images.size();
-        auto imgProcEnd = std::chrono::high_resolution_clock::now();
-        auto imgProcDuration = std::chrono::duration_cast<std::chrono::milliseconds>(imgProcEnd - imgProcStart);
-
-        // 计时: 推理阶段
-        BatchImageOutput output;
-        output.results = nullptr;
-        output.count = 0;
-        auto inferStart = std::chrono::high_resolution_clock::now();
-        FR_ProcessBatchImages(&input, &output);
-        auto inferEnd = std::chrono::high_resolution_clock::now();
-        auto inferDuration = std::chrono::duration_cast<std::chrono::milliseconds>(inferEnd - inferStart);
-
-        int successCount = 0;
-        for (int i = 0; i < output.count; i++) {
-            if (output.results[i].status == 0) successCount++;
-        }
+        
+        // 强制处理缓冲区中的剩余图片
+        std::cout << "  Flushing remaining images..." << std::endl;
+        FR_FlushBatch();
+        
+        // 计算平均值
+        double avgImgProcTime = totalImgProcTime * 1.0 / iterations;
+        double avgInferTime = totalInferTime * 1.0 / iterations;
+        double avgTotalTime = avgImgProcTime + avgInferTime;
+        double avgSuccessPerBatch = totalSuccess * 1.0 / iterations;
+        double avgTimePerImage = avgSuccessPerBatch > 0 ? avgTotalTime / avgSuccessPerBatch : 0;
+        double throughput = avgTotalTime > 0 ? avgSuccessPerBatch * 1000.0 / avgTotalTime : 0;
 
         BenchmarkResult result;
         result.batchSize = batchSize;
-        result.totalTime = imgProcDuration.count() + inferDuration.count();
-        result.avgTimePerImage = successCount > 0 ? (imgProcDuration.count() + inferDuration.count()) * 1.0 / successCount : 0;
-        result.throughput = (imgProcDuration.count() + inferDuration.count()) > 0 ? successCount * 1000.0 / (imgProcDuration.count() + inferDuration.count()) : 0;
+        result.totalTime = static_cast<long long>(avgTotalTime);
+        result.avgTimePerImage = avgTimePerImage;
+        result.throughput = throughput;
         results.push_back(result);
 
-        FR_FreeBatchResults(&output);
-
-        std::cout << "  Image preprocessing time: " << imgProcDuration.count() << " ms" << std::endl;
-        std::cout << "  Inference time: " << inferDuration.count() << " ms" << std::endl;
-        std::cout << "  Total confirmed: " << result.totalTime << " ms" << std::endl;
+        std::cout << "\n  Average results over " << iterations << " iterations:" << std::endl;
+        std::cout << "  - Avg image preprocessing time: " << avgImgProcTime << " ms" << std::endl;
+        std::cout << "  - Avg inference time: " << avgInferTime << " ms" << std::endl;
+        std::cout << "  - Avg total time: " << avgTotalTime << " ms" << std::endl;
+        std::cout << "  - Avg success count: " << avgSuccessPerBatch << " images/batch" << std::endl;
+        std::cout << "  - Avg time per image: " << avgTimePerImage << " ms" << std::endl;
+        std::cout << "  - Throughput: " << throughput << " img/s" << std::endl;
     }
     
     // 清理
@@ -154,17 +188,17 @@ void runBenchmark(const char* modelPath, const std::string& imagePath, bool useG
     
     // 输出总结
     std::cout << "\n========================================" << std::endl;
-    std::cout << "  Performance Summary" << std::endl;
+    std::cout << "  Performance Summary (50 iterations avg)" << std::endl;
     std::cout << "========================================" << std::endl;
     std::cout << std::endl;
     
-    printf("%-12s %-15s %-20s %-20s\n", 
-           "Batch Size", "Total Time(ms)", "Avg Time/Image(ms)", "Throughput(img/s)");
-    printf("%-12s %-15s %-20s %-20s\n", 
-           "----------", "--------------", "------------------", "-----------------");
+    printf("%-12s %-18s %-20s %-20s\n", 
+           "Batch Size", "Avg Total Time(ms)", "Avg Time/Image(ms)", "Throughput(img/s)");
+    printf("%-12s %-18s %-20s %-20s\n", 
+           "----------", "-----------------", "------------------", "-----------------");
     
     for (const auto& result : results) {
-        printf("%-12d %-15lld %-20.2f %-20.2f\n",
+        printf("%-12d %-18lld %-20.2f %-20.2f\n",
                result.batchSize,
                result.totalTime,
                result.avgTimePerImage,
@@ -201,7 +235,7 @@ int main(int argc, char** argv) {
         std::cout << "Usage: " << argv[0] << " <model_path> <image_path> [--gpu] [--device <id>]" << std::endl;
         std::cout << "\nDescription:" << std::endl;
         std::cout << "  This tool tests batch processing performance with different batch sizes." << std::endl;
-        std::cout << "  It will test batch sizes: 1, 16, and 32" << std::endl;
+        std::cout << "  It will test batch sizes: 1, 16, 32, 64, 128 (each with 50 iterations)" << std::endl;
         std::cout << "\nOptions:" << std::endl;
         std::cout << "  --gpu         Enable GPU acceleration (requires GPU build)" << std::endl;
         std::cout << "  --device <id> Specify GPU device ID (default: 0)" << std::endl;
