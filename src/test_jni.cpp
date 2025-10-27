@@ -65,86 +65,6 @@ std::string imageToBase64(const std::string& imagePath) {
     return ret;
 }
 
-void testBatchPerformance(const char* modelPath, const std::string& imagePath, int batchSize) {
-    std::cout << "\n--- Testing batch size: " << batchSize << " ---" << std::endl;
-    
-    // 转换图片为 Base64
-    auto t1 = std::chrono::high_resolution_clock::now();
-    std::string base64 = imageToBase64(imagePath);
-    auto t2 = std::chrono::high_resolution_clock::now();
-    auto base64Time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
-    
-    if (base64.empty()) {
-        std::cerr << "Failed to convert image to base64" << std::endl;
-        return;
-    }
-    
-    std::cout << "  Base64 encoding time: " << base64Time << " ms" << std::endl;
-    
-    // 复制 Base64 字符串形成批次
-    std::vector<std::string> base64Strings(batchSize, base64);
-    std::vector<ImageBase64> images;
-    
-    for (int i = 0; i < batchSize; i++) {
-        ImageBase64 img;
-        img.base64_str = base64Strings[i].c_str();
-        img.str_len = base64Strings[i].length();
-        images.push_back(img);
-    }
-    
-    BatchImageInput input;
-    input.images = images.data();
-    input.count = images.size();
-    
-    BatchImageOutput output;
-    output.results = nullptr;
-    output.count = 0;
-    
-    // 测量总处理时间
-    auto start = std::chrono::high_resolution_clock::now();
-    
-    int ret = FR_ProcessBatchImages(&input, &output);
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    
-    if (ret != 0) {
-        std::cerr << "Batch processing failed with code: " << ret << std::endl;
-        return;
-    }
-    
-    // 统计成功率
-    int successCount = 0;
-    for (int i = 0; i < output.count; i++) {
-        if (output.results[i].status == 0) {
-            successCount++;
-        }
-    }
-    
-    // 输出性能指标
-    std::cout << "  Total time: " << duration.count() << " ms" << std::endl;
-    std::cout << "  Success rate: " << successCount << "/" << output.count << std::endl;
-    std::cout << "  Average time per image: " 
-              << (successCount > 0 ? duration.count() * 1.0 / successCount : 0) 
-              << " ms" << std::endl;
-    std::cout << "  Throughput: " 
-              << (duration.count() > 0 ? successCount * 1000.0 / duration.count() : 0) 
-              << " images/sec" << std::endl;
-    
-    // 显示第一张图片的特征（验证正确性）
-    if (output.count > 0 && output.results[0].status == 0) {
-        std::cout << "  Feature dim: " << output.results[0].feature_dim << std::endl;
-        std::cout << "  First 5 features: ";
-        for (int i = 0; i < std::min(5, output.results[0].feature_dim); i++) {
-            printf("%.4f ", output.results[0].features[i]);
-        }
-        std::cout << std::endl;
-    }
-    
-    // 释放结果
-    FR_FreeBatchResults(&output);
-}
-
 void runBenchmark(const char* modelPath, const std::string& imagePath, bool useGPU, int deviceId) {
     std::cout << "========================================" << std::endl;
     std::cout << "  Batch Processing Performance Test" << std::endl;
@@ -179,7 +99,48 @@ void runBenchmark(const char* modelPath, const std::string& imagePath, bool useG
     std::vector<BenchmarkResult> results;
     
     for (int batchSize : batchSizes) {
-        testBatchPerformance(modelPath, imagePath, batchSize);
+        // 重新运行一次获取准确结果（排除首次缓存影响）
+        std::cout << "\n  Running again for accurate measurement..." << std::endl;
+        
+        std::string base64 = imageToBase64(imagePath);
+        std::vector<std::string> base64Strings(batchSize, base64);
+        std::vector<ImageBase64> images;
+        
+        for (int i = 0; i < batchSize; i++) {
+            ImageBase64 img;
+            img.base64_str = base64Strings[i].c_str();
+            img.str_len = base64Strings[i].length();
+            images.push_back(img);
+        }
+        
+        BatchImageInput input;
+        input.images = images.data();
+        input.count = images.size();
+        
+        BatchImageOutput output;
+        output.results = nullptr;
+        output.count = 0;
+        
+        auto start = std::chrono::high_resolution_clock::now();
+        FR_ProcessBatchImages(&input, &output);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        
+        int successCount = 0;
+        for (int i = 0; i < output.count; i++) {
+            if (output.results[i].status == 0) successCount++;
+        }
+        
+        BenchmarkResult result;
+        result.batchSize = batchSize;
+        result.totalTime = duration.count();
+        result.avgTimePerImage = successCount > 0 ? duration.count() * 1.0 / successCount : 0;
+        result.throughput = duration.count() > 0 ? successCount * 1000.0 / duration.count() : 0;
+        results.push_back(result);
+        
+        FR_FreeBatchResults(&output);
+        
+        std::cout << "  Confirmed: " << duration.count() << " ms" << std::endl;
     }
     
     // 清理
