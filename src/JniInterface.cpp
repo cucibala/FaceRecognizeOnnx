@@ -67,7 +67,14 @@ struct ImageBuffer {
             first_image_time = std::chrono::steady_clock::now();
             has_images = true;
         }
-        images.push_back(img);
+        
+        // 验证图片有效性
+        if (img.empty() || img.cols <= 0 || img.rows <= 0) {
+            std::cerr << "WARNING: Attempting to add invalid image to buffer (size: " 
+                      << img.cols << "x" << img.rows << ")" << std::endl;
+        }
+        
+        images.push_back(img.clone());  // 使用 clone 避免引用问题
         result_ptrs.push_back(result_ptr);
         batch_ids.push_back(current_batch_id);
         return current_batch_id;  // 返回该图片的批次 ID
@@ -260,21 +267,43 @@ static void processBatchLocked() {
     int original_size = g_image_buffer.size();
     int batch_size = original_size;
     
-    // 如果不足 32 张，复制第一张图片补足到 32 张
-    std::vector<cv::Mat> images_to_process = g_image_buffer.images;
-    if (original_size < ImageBuffer::MIN_BATCH_SIZE && original_size > 0) {
-        std::cout << "Buffer has only " << original_size << " images, padding to " 
+    // 检查并过滤无效图片
+    std::vector<cv::Mat> images_to_process;
+    std::vector<ImageResult*> valid_result_ptrs;
+    std::vector<int> valid_indices;
+    
+    for (int i = 0; i < original_size; i++) {
+        if (!g_image_buffer.images[i].empty()) {
+            images_to_process.push_back(g_image_buffer.images[i]);
+            valid_result_ptrs.push_back(g_image_buffer.result_ptrs[i]);
+            valid_indices.push_back(i);
+        } else {
+            std::cerr << "WARNING: Image " << i << " is empty in buffer, marking as failed" << std::endl;
+            g_image_buffer.result_ptrs[i]->status = -11;  // 图片解码失败
+        }
+    }
+    
+    int valid_count = images_to_process.size();
+    if (valid_count == 0) {
+        std::cerr << "ERROR: No valid images to process!" << std::endl;
+        return;
+    }
+    
+    // 如果不足 32 张，复制第一张有效图片补足到 32 张
+    if (valid_count < ImageBuffer::MIN_BATCH_SIZE) {
+        std::cout << "Buffer has only " << valid_count << " valid images, padding to " 
                   << ImageBuffer::MIN_BATCH_SIZE << " with duplicates" << std::endl;
         
-        cv::Mat template_img = g_image_buffer.images[0];
+        cv::Mat template_img = images_to_process[0].clone();
         while (images_to_process.size() < ImageBuffer::MIN_BATCH_SIZE) {
             images_to_process.push_back(template_img.clone());
         }
-        batch_size = images_to_process.size();
     }
     
-    std::cout << "\n=== Processing batch: " << original_size << " real + " 
-              << (batch_size - original_size) << " padded = " << batch_size << " total ===" << std::endl;
+    batch_size = images_to_process.size();
+    
+    std::cout << "\n=== Processing batch: " << valid_count << " valid + " 
+              << (batch_size - valid_count) << " padded = " << batch_size << " total ===" << std::endl;
     
     auto extractStart = std::chrono::high_resolution_clock::now();
     auto allFeatures = g_recognizer->extractFeaturesBatchSimple(images_to_process);
@@ -283,22 +312,34 @@ static void processBatchLocked() {
     
     std::cout << "Batch inference completed: " << batch_size << " images in " 
               << extractDuration.count() << " ms" << std::endl;
-    std::cout << "Throughput: " << (original_size * 1000.0 / extractDuration.count()) << " img/s (real images)" << std::endl;
+    std::cout << "Throughput: " << (valid_count * 1000.0 / extractDuration.count()) << " img/s (valid images)" << std::endl;
     
-    // 将结果复制到输出（只处理真实的图片，忽略填充的）
-    for (int i = 0; i < original_size && i < (int)allFeatures.size() && i < (int)g_image_buffer.result_ptrs.size(); i++) {
-        ImageResult* result = g_image_buffer.result_ptrs[i];
+    // 将结果复制到输出（只处理有效的图片，忽略填充的）
+    int success_count = 0;
+    int fail_count = 0;
+    
+    for (int i = 0; i < valid_count && i < (int)allFeatures.size() && i < (int)valid_result_ptrs.size(); i++) {
+        ImageResult* result = valid_result_ptrs[i];
         
         if (!allFeatures[i].empty()) {
             result->feature_dim = allFeatures[i].size();
             result->features = new float[result->feature_dim];
             std::memcpy(result->features, allFeatures[i].data(), result->feature_dim * sizeof(float));
             result->status = 0;
+            success_count++;
         } else {
             result->status = -12;
-            std::cout << "Batch inference failed for image " << i << std::endl;
+            fail_count++;
+            std::cerr << "ERROR: Feature extraction failed for valid image at index " 
+                      << valid_indices[i] << " (batch position " << i << ")" << std::endl;
         }
     }
+    
+    if (fail_count > 0) {
+        std::cerr << "WARNING: " << fail_count << " out of " << valid_count 
+                  << " valid images failed feature extraction" << std::endl;
+    }
+    std::cout << "Results: " << success_count << " success, " << fail_count << " failed" << std::endl;
     
     // 更新已处理的批次 ID
     g_image_buffer.processed_batch_id = g_image_buffer.current_batch_id;
@@ -500,4 +541,5 @@ extern "C" float FR_CompareFaces(
     float cosine = dot_product / (norm1 * norm2);
     return (cosine + 1.0f) / 2.0f;
 }
+
 
