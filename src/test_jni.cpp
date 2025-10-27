@@ -151,10 +151,11 @@ void runBenchmark(const char* modelPath, const std::string& imagePath, bool useG
     };
     
     std::vector<TestConfig> configs = {
-        {4, 32, 5120},   // 4线程，每次32张，总共5120张（5次填满1024的缓冲区）
-        {8, 32, 10240},  // 8线程，每次32张，总共10240张
-        {16, 32, 10240}, // 16线程，每次32张，总共10240张
-        {32, 16, 10240}, // 32线程，每次16张，总共10240张
+        {1, 16, 1024},   // 1线程，每次16张，总共1024张（测试超时机制）
+        {2, 32, 2048},   // 2线程，每次32张，总共2048张
+        {4, 32, 4096},   // 4线程，每次32张，总共4096张
+        {8, 32, 8192},   // 8线程，每次32张，总共8192张
+        {16, 16, 8192},  // 16线程，每次16张，总共8192张
     };
     
     std::cout << "\n========================================" << std::endl;
@@ -284,12 +285,13 @@ int main(int argc, char** argv) {
         std::cout << "\nDescription:" << std::endl;
         std::cout << "  This tool tests multi-threaded batch processing performance." << std::endl;
         std::cout << "  It uses concurrent threads to continuously submit images to test the" << std::endl;
-        std::cout << "  buffering mechanism (1024 images buffer)." << std::endl;
+        std::cout << "  smart batching mechanism (32 images batch + 20ms timeout)." << std::endl;
         std::cout << "\nTest Configurations:" << std::endl;
-        std::cout << "  - 4 threads,  batch=32, total=5120 images" << std::endl;
-        std::cout << "  - 8 threads,  batch=32, total=10240 images" << std::endl;
-        std::cout << "  - 16 threads, batch=32, total=10240 images" << std::endl;
-        std::cout << "  - 32 threads, batch=16, total=10240 images" << std::endl;
+        std::cout << "  - 1 thread,   batch=16, total=1024 images  (tests timeout mechanism)" << std::endl;
+        std::cout << "  - 2 threads,  batch=32, total=2048 images" << std::endl;
+        std::cout << "  - 4 threads,  batch=32, total=4096 images" << std::endl;
+        std::cout << "  - 8 threads,  batch=32, total=8192 images" << std::endl;
+        std::cout << "  - 16 threads, batch=16, total=8192 images" << std::endl;
         std::cout << "\nOptions:" << std::endl;
         std::cout << "  --gpu         Enable GPU acceleration (requires GPU build)" << std::endl;
         std::cout << "  --device <id> Specify GPU device ID (default: 0)" << std::endl;
