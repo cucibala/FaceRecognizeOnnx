@@ -197,9 +197,10 @@ extern "C" int FR_ProcessBatchImages(
         // 批量提取特征
         std::cout << "Running batch feature extraction..." << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << " ms" << std::endl;
 
-
         auto allFeatures = g_recognizer->extractFeaturesBatchSimple(images);
-        
+        auto t3 = std::chrono::high_resolution_clock::now();
+        std::cout << "Batch feature extraction completed in " << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count() << " ms" << std::endl;
+
         // 将结果复制到输出
         for (size_t i = 0; i < allFeatures.size() && i < static_cast<size_t>(input->count); i++) {
             ImageResult& result = output->results[i];
