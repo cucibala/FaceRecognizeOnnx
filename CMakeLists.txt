@@ -5,8 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # GPU 支持选项
-option(USE_CUDA "Enable CUDA support for ONNX Runtime" OFF)
-option(USE_TENSORRT "Enable TensorRT support for ONNX Runtime" OFF)
+option(USE_CUDA "Enable CUDA support for ONNX Runtime" ON)  # 默认启用 CUDA
+option(USE_TENSORRT "Enable TensorRT support for ONNX Runtime" OFF)  # 默认禁用 TensorRT
 
 find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})

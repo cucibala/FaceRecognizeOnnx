@@ -366,43 +366,53 @@ void FaceDetector::setupGPU() {
         std::cout << "Configuring GPU support for detector..." << std::endl;
         
 #ifdef USE_TENSORRT
-        // TensorRT 优先（性能最好）
-        OrtTensorRTProviderOptions trt_options;
-        trt_options.device_id = deviceId_;
-        trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024; // 2GB
-        trt_options.trt_fp16_enable = 1; // 启用 FP16 加速
-        
-        // ⭐ 关键：设置引擎缓存路径
-        trt_options.trt_engine_cache_enable = 1;
-        trt_options.trt_engine_cache_path = "./trt_cache";
-        
-        sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
-        std::cout << "✓ TensorRT provider enabled for detector (GPU device: " << deviceId_ << ", FP16: ON)" << std::endl;
-        std::cout << "  Engine cache: ./trt_cache" << std::endl;
+        // TensorRT - 尝试添加，失败则跳过
+        try {
+            std::cout << "  Attempting to add TensorRT provider for detector..." << std::endl;
+            
+            OrtTensorRTProviderOptions trt_options{};
+            trt_options.device_id = deviceId_;
+            trt_options.trt_engine_cache_enable = 1;
+            trt_options.trt_engine_cache_path = "./trt_cache";
+            trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024;
+            trt_options.trt_fp16_enable = 1;
+            trt_options.trt_int8_enable = 0;
+            trt_options.trt_dla_enable = 0;
+            trt_options.trt_dump_subgraphs = 0;
+            
+            sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
+            std::cout << "✓ TensorRT provider added for detector" << std::endl;
+        } catch (const Ort::Exception& e) {
+            std::cerr << "⚠️  TensorRT failed for detector: " << e.what() << std::endl;
+            std::cerr << "   Will use CUDA instead" << std::endl;
+        } catch (...) {
+            std::cerr << "⚠️  TensorRT failed for detector (unknown error)" << std::endl;
+            std::cerr << "   Will use CUDA instead" << std::endl;
+        }
 #endif
 
 #ifdef USE_CUDA
-        // CUDA 作为备选或独立使用
-        OrtCUDAProviderOptions cuda_options;
-        cuda_options.device_id = deviceId_;
-        
-        sessionOptions_.AppendExecutionProvider_CUDA(cuda_options);
-        std::cout << "✓ CUDA provider enabled for detector (GPU device: " << deviceId_ << ")" << std::endl;
+        // CUDA - 更稳定的选择
+        try {
+            OrtCUDAProviderOptions cuda_options;
+            cuda_options.device_id = deviceId_;
+            
+            sessionOptions_.AppendExecutionProvider_CUDA(cuda_options);
+            std::cout << "✓ CUDA provider added for detector (device: " << deviceId_ << ")" << std::endl;
+        } catch (const Ort::Exception& e) {
+            std::cerr << "⚠️  Failed to add CUDA provider: " << e.what() << std::endl;
+            std::cerr << "   Falling back to CPU" << std::endl;
+        }
 #endif
 
 #if !defined(USE_CUDA) && !defined(USE_TENSORRT)
         std::cerr << "Warning: GPU requested but not compiled with CUDA/TensorRT support!" << std::endl;
-        std::cerr << "Please recompile with: cmake -DUSE_CUDA=ON or -DUSE_TENSORRT=ON" << std::endl;
-        std::cerr << "Falling back to CPU execution" << std::endl;
+        std::cerr << "Using CPU execution" << std::endl;
 #endif
         
-    } catch (const Ort::Exception& e) {
+    } catch (const std::exception& e) {
         std::cerr << "Error setting up GPU: " << e.what() << std::endl;
-        std::cerr << "Possible reasons:" << std::endl;
-        std::cerr << "  - CUDA/TensorRT not installed or not in PATH" << std::endl;
-        std::cerr << "  - Using CPU version of ONNX Runtime instead of GPU version" << std::endl;
-        std::cerr << "  - Incompatible CUDA/TensorRT version" << std::endl;
-        std::cerr << "Falling back to CPU execution" << std::endl;
+        std::cerr << "Using CPU execution" << std::endl;
     }
 }
 
