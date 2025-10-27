@@ -512,7 +512,7 @@ void FaceRecognizer::setupGPU() {
             trt_options.trt_int8_enable = 0;   // 禁用 INT8
             trt_options.trt_dla_enable = 0;    // 禁用 DLA
             trt_options.trt_dump_subgraphs = 0;
-            trtOpts.trt_engine_decryption_enable = false;
+            trt_options.trt_engine_decryption_enable = false;
             
             sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
             std::cout << "✓ TensorRT provider added successfully!" << std::endl;
