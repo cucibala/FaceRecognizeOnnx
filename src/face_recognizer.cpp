@@ -476,14 +476,14 @@ void FaceRecognizer::setupGPU() {
         std::cout << "Configuring CUDA GPU support..." << std::endl;
         
 #ifdef USE_CUDA
-        // OrtCUDAProviderOptions cuda_options;
-        // cuda_options.device_id = deviceId_;
+        OrtCUDAProviderOptions cuda_options;
+        cuda_options.device_id = deviceId_;
         // cuda_options.arena_extend_strategy = 0;
         // cuda_options.gpu_mem_limit = 2ULL * 1024 * 1024 * 1024; // 2GB
         // cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchExhaustive;
         // cuda_options.do_copy_in_default_stream = 1;
         
-        sessionOptions_.AppendExecutionProvider_CUDA();
+        sessionOptions_.AppendExecutionProvider_CUDA(cuda_options);
         std::cout << "✓ CUDA provider enabled (GPU device: " << deviceId_ << ")" << std::endl;
 #else
         std::cerr << "Warning: GPU requested but not compiled with CUDA support!" << std::endl;
