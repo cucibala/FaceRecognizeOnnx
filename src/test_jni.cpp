@@ -101,46 +101,51 @@ void runBenchmark(const char* modelPath, const std::string& imagePath, bool useG
     for (int batchSize : batchSizes) {
         // 重新运行一次获取准确结果（排除首次缓存影响）
         std::cout << "\n  Running again for accurate measurement..." << std::endl;
-        
+
         std::string base64 = imageToBase64(imagePath);
+
+        // 计时: 图片准备阶段
+        auto imgProcStart = std::chrono::high_resolution_clock::now();
         std::vector<std::string> base64Strings(batchSize, base64);
         std::vector<ImageBase64> images;
-        
         for (int i = 0; i < batchSize; i++) {
             ImageBase64 img;
             img.base64_str = base64Strings[i].c_str();
             img.str_len = base64Strings[i].length();
             images.push_back(img);
         }
-        
         BatchImageInput input;
         input.images = images.data();
         input.count = images.size();
-        
+        auto imgProcEnd = std::chrono::high_resolution_clock::now();
+        auto imgProcDuration = std::chrono::duration_cast<std::chrono::milliseconds>(imgProcEnd - imgProcStart);
+
+        // 计时: 推理阶段
         BatchImageOutput output;
         output.results = nullptr;
         output.count = 0;
-        
-        auto start = std::chrono::high_resolution_clock::now();
+        auto inferStart = std::chrono::high_resolution_clock::now();
         FR_ProcessBatchImages(&input, &output);
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        
+        auto inferEnd = std::chrono::high_resolution_clock::now();
+        auto inferDuration = std::chrono::duration_cast<std::chrono::milliseconds>(inferEnd - inferStart);
+
         int successCount = 0;
         for (int i = 0; i < output.count; i++) {
             if (output.results[i].status == 0) successCount++;
         }
-        
+
         BenchmarkResult result;
         result.batchSize = batchSize;
-        result.totalTime = duration.count();
-        result.avgTimePerImage = successCount > 0 ? duration.count() * 1.0 / successCount : 0;
-        result.throughput = duration.count() > 0 ? successCount * 1000.0 / duration.count() : 0;
+        result.totalTime = imgProcDuration.count() + inferDuration.count();
+        result.avgTimePerImage = successCount > 0 ? (imgProcDuration.count() + inferDuration.count()) * 1.0 / successCount : 0;
+        result.throughput = (imgProcDuration.count() + inferDuration.count()) > 0 ? successCount * 1000.0 / (imgProcDuration.count() + inferDuration.count()) : 0;
         results.push_back(result);
-        
+
         FR_FreeBatchResults(&output);
-        
-        std::cout << "  Confirmed: " << duration.count() << " ms" << std::endl;
+
+        std::cout << "  Image preprocessing time: " << imgProcDuration.count() << " ms" << std::endl;
+        std::cout << "  Inference time: " << inferDuration.count() << " ms" << std::endl;
+        std::cout << "  Total confirmed: " << result.totalTime << " ms" << std::endl;
     }
     
     // 清理
