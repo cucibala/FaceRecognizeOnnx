@@ -373,7 +373,7 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
             outputNamePtrs_.data(), outputNamePtrs_.size()
         );
         auto t2 = std::chrono::high_resolution_clock::now();
-        std::cout << "Batch inference completed in " << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << " ms" << std::endl;
+        std::cout << "->>>>>>>Batch inference completed in " << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << " ms" << std::endl;
         
         // 获取输出
         float* outputData = outputTensors[0].GetTensorMutableData<float>();
