@@ -179,50 +179,7 @@ void runBenchmark(const char* modelPath, const std::string& imagePath, bool useG
     std::vector<BenchmarkResult> results;
     
     for (int batchSize : batchSizes) {
-        // testBatchPerformance(modelPath, imagePath, batchSize);
-        
-        // 重新运行一次获取准确结果（排除首次缓存影响）
-        std::cout << "\n  Running again for accurate measurement..." << std::endl;
-        
-        std::string base64 = imageToBase64(imagePath);
-        std::vector<std::string> base64Strings(batchSize, base64);
-        std::vector<ImageBase64> images;
-        
-        for (int i = 0; i < batchSize; i++) {
-            ImageBase64 img;
-            img.base64_str = base64Strings[i].c_str();
-            img.str_len = base64Strings[i].length();
-            images.push_back(img);
-        }
-        
-        BatchImageInput input;
-        input.images = images.data();
-        input.count = images.size();
-        
-        BatchImageOutput output;
-        output.results = nullptr;
-        output.count = 0;
-        
-        auto start = std::chrono::high_resolution_clock::now();
-        FR_ProcessBatchImages(&input, &output);
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        
-        int successCount = 0;
-        for (int i = 0; i < output.count; i++) {
-            if (output.results[i].status == 0) successCount++;
-        }
-        
-        BenchmarkResult result;
-        result.batchSize = batchSize;
-        result.totalTime = duration.count();
-        result.avgTimePerImage = successCount > 0 ? duration.count() * 1.0 / successCount : 0;
-        result.throughput = duration.count() > 0 ? successCount * 1000.0 / duration.count() : 0;
-        results.push_back(result);
-        
-        FR_FreeBatchResults(&output);
-        
-        std::cout << "  Confirmed: " << duration.count() << " ms" << std::endl;
+        testBatchPerformance(modelPath, imagePath, batchSize);
     }
     
     // 清理
