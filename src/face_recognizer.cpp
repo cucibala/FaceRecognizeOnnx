@@ -84,35 +84,29 @@ bool FaceRecognizer::loadModel(const std::string& modelPath) {
             outputNamePtrs_.push_back(name.c_str());
         }
         
-        // 打印实际使用的 Execution Provider
-        Ort::AllocatorWithDefaultOptions allocator;
-        auto providers = session_->GetProviders();
-        
         std::cout << "Face recognizer model loaded successfully!" << std::endl;
         std::cout << "Using input size: " << inputWidth_ << "x" << inputHeight_ << std::endl;
-        std::cout << "Active Execution Providers: ";
-        for (size_t i = 0; i < providers.size(); i++) {
-            std::cout << providers[i];
-            if (i < providers.size() - 1) std::cout << ", ";
-        }
+        
+        // 显示配置的 Provider
+        std::cout << "Configured Execution Providers: ";
+#ifdef USE_TENSORRT
+        std::cout << "TensorRT ";
+#endif
+#ifdef USE_CUDA
+        std::cout << "CUDA ";
+#endif
+#if !defined(USE_CUDA) && !defined(USE_TENSORRT)
+        std::cout << "CPU ";
+#endif
         std::cout << std::endl;
         
-        // 检查是否真的在用GPU
-        bool usingGPU = false;
-        for (const auto& provider : providers) {
-            if (provider.find("CUDA") != std::string::npos || 
-                provider.find("TensorRT") != std::string::npos) {
-                usingGPU = true;
-                break;
-            }
-        }
-        
-        if (useGPU_ && !usingGPU) {
-            std::cerr << "⚠️  WARNING: GPU requested but only CPU provider active!" << std::endl;
-            std::cerr << "    This will be VERY slow. Check:" << std::endl;
-            std::cerr << "    1. Are you using GPU version of ONNX Runtime?" << std::endl;
-            std::cerr << "    2. Is CUDA installed and in PATH?" << std::endl;
-            std::cerr << "    3. Did you compile with -DUSE_CUDA=ON?" << std::endl;
+        if (useGPU_) {
+#if defined(USE_CUDA) || defined(USE_TENSORRT)
+            std::cout << "✓ GPU mode active (device: " << deviceId_ << ")" << std::endl;
+#else
+            std::cerr << "⚠️  WARNING: GPU requested but compiled without CUDA/TensorRT!" << std::endl;
+            std::cerr << "    Recompile with: cmake -DUSE_CUDA=ON" << std::endl;
+#endif
         }
         
         std::cout << "Number of outputs: " << outputNames_.size() << std::endl;
@@ -401,20 +395,33 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
         auto t2 = std::chrono::high_resolution_clock::now();
         auto inferenceTime = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
         
-        std::cout << "==> Batch inference: " << inferenceTime << " ms" << std::endl;
+        std::cout << "==> Batch inference: " << inferenceTime << " ms (batch=" << batchSize << ")" << std::endl;
         std::cout << "    Per image: " << (inferenceTime * 1.0 / batchSize) << " ms" << std::endl;
         std::cout << "    Throughput: " << (batchSize * 1000.0 / inferenceTime) << " img/s" << std::endl;
         
-        // 性能警告
-        double expectedTimeGPU = batchSize * 0.5; // 预期每张0.5ms
-        if (inferenceTime > expectedTimeGPU * 5 && useGPU_) {
-            std::cerr << "⚠️  Performance warning: Inference is too slow!" << std::endl;
-            std::cerr << "    Expected: ~" << expectedTimeGPU << " ms on GPU" << std::endl;
-            std::cerr << "    Actual: " << inferenceTime << " ms" << std::endl;
-            std::cerr << "    Possible issues:" << std::endl;
-            std::cerr << "      - Not using GPU (check providers above)" << std::endl;
-            std::cerr << "      - Using CPU version of ONNX Runtime" << std::endl;
-            std::cerr << "      - CUDA driver issues" << std::endl;
+        // 性能诊断
+        if (useGPU_) {
+            double perImageTime = inferenceTime * 1.0 / batchSize;
+            std::cout << "\n[Performance Check]" << std::endl;
+            
+            if (perImageTime > 5.0) {
+                std::cerr << "❌ CRITICAL: Likely running on CPU!" << std::endl;
+                std::cerr << "   Per-image time: " << perImageTime << " ms (expected <1ms on GPU)" << std::endl;
+                std::cerr << "   Check:" << std::endl;
+                std::cerr << "   1. ldd ./TestJniInterface | grep onnxruntime" << std::endl;
+                std::cerr << "   2. ls $ONNXRUNTIME_DIR/lib/ | grep cuda" << std::endl;
+                std::cerr << "   3. nvidia-smi (GPU should show activity)" << std::endl;
+            } else if (perImageTime > 2.0) {
+                std::cout << "⚠️  WARNING: Slower than expected for GPU" << std::endl;
+                std::cout << "   Per-image: " << perImageTime << " ms (expected <1ms)" << std::endl;
+            } else {
+                std::cout << "✓ Performance looks good for GPU" << std::endl;
+                std::cout << "   Per-image: " << perImageTime << " ms" << std::endl;
+            }
+        } else {
+            double perImageTime = inferenceTime * 1.0 / batchSize;
+            std::cout << "\n[CPU Mode]" << std::endl;
+            std::cout << "   Per-image: " << perImageTime << " ms (typical CPU speed)" << std::endl;
         }
         
         // 获取输出
