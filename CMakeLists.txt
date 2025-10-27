@@ -25,17 +25,32 @@ set(SOURCES
     src/main.cpp
     src/face_detector.cpp
     src/face_recognizer.cpp
+    src/JniInterface.cpp
 )
 
 set(HEADERS
     src/face_detector.h
     src/face_recognizer.h
+    src/JniInterface.h
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 
 # Link libraries
 target_link_libraries(${PROJECT_NAME} 
+    ${OpenCV_LIBS}
+    onnxruntime
+)
+
+# JNI Test executable
+add_executable(TestJniInterface 
+    src/test_jni.cpp
+    src/face_detector.cpp
+    src/face_recognizer.cpp
+    src/JniInterface.cpp
+)
+
+target_link_libraries(TestJniInterface 
     ${OpenCV_LIBS}
     onnxruntime
 )
