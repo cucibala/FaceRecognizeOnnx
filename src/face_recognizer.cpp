@@ -325,7 +325,6 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
         std::vector<bool> validFlags(batchSize, false);
         
         // 串行处理，避免与 ONNX Runtime 线程冲突
-        #pragma omp parallel for num_threads(16)
         for (int i = 0; i < batchSize; i++) {
             int offset = i * singleImageSize;
             
