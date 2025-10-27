@@ -273,18 +273,26 @@ int main(int argc, char** argv) {
     std::cout << "InsightFace C++ Demo - buffalo_sc 模型" << std::endl;
     std::cout << "========================================" << std::endl;
     
-    // 检查是否启用 CUDA GPU
+    // 检查是否启用 GPU
     bool useGPU = false;
     int deviceId = 0;
     
+#ifdef USE_TENSORRT
+    useGPU = true;
+    std::cout << "TensorRT support: ENABLED" << std::endl;
+#endif
+
 #ifdef USE_CUDA
     useGPU = true;
     std::cout << "CUDA support: ENABLED" << std::endl;
-    std::cout << "Using GPU device: " << deviceId << std::endl;
-#else
-    std::cout << "CUDA support: DISABLED (CPU mode)" << std::endl;
-    std::cout << "Tip: Recompile with -DUSE_CUDA=ON to enable GPU acceleration" << std::endl;
 #endif
+
+    if (useGPU) {
+        std::cout << "Using GPU device: " << deviceId << std::endl;
+    } else {
+        std::cout << "GPU support: DISABLED (CPU mode)" << std::endl;
+        std::cout << "Tip: Recompile with -DUSE_CUDA=ON or -DUSE_TENSORRT=ON for GPU acceleration" << std::endl;
+    }
     std::cout << "========================================" << std::endl;
     
     // 模型路径

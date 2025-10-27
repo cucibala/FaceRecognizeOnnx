@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # GPU 支持选项
 option(USE_CUDA "Enable CUDA support for ONNX Runtime" OFF)
+option(USE_TENSORRT "Enable TensorRT support for ONNX Runtime" OFF)
 
 find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
@@ -21,13 +22,21 @@ endif()
 include_directories(${ONNXRUNTIME_DIR}/include)
 link_directories(${ONNXRUNTIME_DIR}/lib)
 
-# 配置 CUDA 支持
+# 配置 GPU 支持
 if(USE_CUDA)
     add_definitions(-DUSE_CUDA)
     message(STATUS "CUDA support enabled")
+endif()
+
+if(USE_TENSORRT)
+    add_definitions(-DUSE_TENSORRT)
+    message(STATUS "TensorRT support enabled")
+endif()
+
+if(USE_CUDA OR USE_TENSORRT)
     message(STATUS "Make sure you are using ONNX Runtime GPU version")
 else()
-    message(STATUS "Using CPU only (use -DUSE_CUDA=ON to enable GPU)")
+    message(STATUS "Using CPU only (use -DUSE_CUDA=ON or -DUSE_TENSORRT=ON to enable GPU)")
 endif()
 
 # Source files

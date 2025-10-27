@@ -363,30 +363,40 @@ float FaceDetector::iou(const cv::Rect& box1, const cv::Rect& box2) {
 
 void FaceDetector::setupGPU() {
     try {
-        std::cout << "Configuring CUDA GPU support for detector..." << std::endl;
+        std::cout << "Configuring GPU support for detector..." << std::endl;
         
+#ifdef USE_TENSORRT
+        // TensorRT 优先（性能最好）
+        OrtTensorRTProviderOptions trt_options;
+        trt_options.device_id = deviceId_;
+        trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024; // 2GB
+        trt_options.trt_fp16_enable = 1; // 启用 FP16 加速
+        
+        sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
+        std::cout << "✓ TensorRT provider enabled for detector (GPU device: " << deviceId_ << ", FP16: ON)" << std::endl;
+#endif
+
 #ifdef USE_CUDA
+        // CUDA 作为备选或独立使用
         OrtCUDAProviderOptions cuda_options;
         cuda_options.device_id = deviceId_;
-        cuda_options.arena_extend_strategy = 0;
-        cuda_options.gpu_mem_limit = 2ULL * 1024 * 1024 * 1024; // 2GB
-        cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchExhaustive;
-        cuda_options.do_copy_in_default_stream = 1;
         
         sessionOptions_.AppendExecutionProvider_CUDA(cuda_options);
         std::cout << "✓ CUDA provider enabled for detector (GPU device: " << deviceId_ << ")" << std::endl;
-#else
-        std::cerr << "Warning: GPU requested but not compiled with CUDA support!" << std::endl;
-        std::cerr << "Please recompile with: cmake -DUSE_CUDA=ON .." << std::endl;
+#endif
+
+#if !defined(USE_CUDA) && !defined(USE_TENSORRT)
+        std::cerr << "Warning: GPU requested but not compiled with CUDA/TensorRT support!" << std::endl;
+        std::cerr << "Please recompile with: cmake -DUSE_CUDA=ON or -DUSE_TENSORRT=ON" << std::endl;
         std::cerr << "Falling back to CPU execution" << std::endl;
 #endif
         
     } catch (const Ort::Exception& e) {
-        std::cerr << "Error setting up CUDA: " << e.what() << std::endl;
+        std::cerr << "Error setting up GPU: " << e.what() << std::endl;
         std::cerr << "Possible reasons:" << std::endl;
-        std::cerr << "  - CUDA not installed or not in PATH" << std::endl;
+        std::cerr << "  - CUDA/TensorRT not installed or not in PATH" << std::endl;
         std::cerr << "  - Using CPU version of ONNX Runtime instead of GPU version" << std::endl;
-        std::cerr << "  - Incompatible CUDA version" << std::endl;
+        std::cerr << "  - Incompatible CUDA/TensorRT version" << std::endl;
         std::cerr << "Falling back to CPU execution" << std::endl;
     }
 }

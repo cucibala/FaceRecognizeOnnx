@@ -187,7 +187,6 @@ extern "C" int FR_ProcessBatchImages(
                 continue;
             }
             
-            std::cout << "  Image " << i << " decoded: " << image.cols << "x" << image.rows << std::endl;
             images.push_back(image);
             validIndices.push_back(i);
         }
