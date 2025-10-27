@@ -341,6 +341,9 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
     
     int batchSize = images.size();
     try {
+        // ===== 时间测量：预处理 =====
+        auto tp1 = std::chrono::high_resolution_clock::now();
+        
         // 优化：一次性分配所有内存
         const int singleImageSize = 3 * inputHeight_ * inputWidth_;
         std::vector<float> batchInputData(batchSize * singleImageSize);
@@ -376,8 +379,12 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
             validFlags[i] = true;
         }
         
-        // 创建批量输入tensor
-        // ONNX Runtime 会自动处理 CPU->GPU 数据传输
+        auto tp2 = std::chrono::high_resolution_clock::now();
+        auto preprocessTime = std::chrono::duration_cast<std::chrono::milliseconds>(tp2 - tp1).count();
+        
+        // ===== 时间测量：创建tensor =====
+        auto tt1 = std::chrono::high_resolution_clock::now();
+        
         std::vector<int64_t> inputShapeBatch = {static_cast<int64_t>(batchSize), 3, inputHeight_, inputWidth_};
         auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
@@ -385,7 +392,10 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
             inputShapeBatch.data(), inputShapeBatch.size()
         );
         
-        // 批量推理（精确测量）
+        auto tt2 = std::chrono::high_resolution_clock::now();
+        auto tensorTime = std::chrono::duration_cast<std::chrono::milliseconds>(tt2 - tt1).count();
+        
+        // ===== 时间测量：纯推理 =====
         auto t1 = std::chrono::high_resolution_clock::now();
         auto outputTensors = session_->Run(
             Ort::RunOptions{nullptr},
@@ -394,6 +404,12 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
         );
         auto t2 = std::chrono::high_resolution_clock::now();
         auto inferenceTime = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+        
+        std::cout << "\n[Time Breakdown - batch=" << batchSize << "]" << std::endl;
+        std::cout << "  Preprocessing: " << preprocessTime << " ms" << std::endl;
+        std::cout << "  Tensor creation: " << tensorTime << " ms" << std::endl;
+        std::cout << "  Pure inference: " << inferenceTime << " ms ⭐" << std::endl;
+        std::cout << "  Total: " << (preprocessTime + tensorTime + inferenceTime) << " ms" << std::endl;
         
         std::cout << "==> Batch inference: " << inferenceTime << " ms (batch=" << batchSize << ")" << std::endl;
         std::cout << "    Per image: " << (inferenceTime * 1.0 / batchSize) << " ms" << std::endl;
