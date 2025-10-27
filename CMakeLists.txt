@@ -4,6 +4,17 @@ project(InsightFaceDemo)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 编译器优化选项
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # 启用 SSE2/AVX 优化（base64 解码加速）
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse2 -O3")
+    message(STATUS "Enabled SSE2 optimizations for base64 decoding")
+elseif(MSVC)
+    # Windows MSVC 默认支持 SSE2
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /O2 /arch:SSE2")
+    message(STATUS "Enabled SSE2 optimizations for base64 decoding (MSVC)")
+endif()
+
 # GPU 支持选项
 option(USE_CUDA "Enable CUDA support for ONNX Runtime" ON)  # 默认启用 CUDA
 option(USE_TENSORRT "Enable TensorRT support for ONNX Runtime" OFF)  # 默认禁用 TensorRT

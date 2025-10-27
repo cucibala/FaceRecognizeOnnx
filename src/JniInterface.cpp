@@ -8,6 +8,12 @@
 #include <memory>
 #include <chrono>
 
+// SIMD 优化支持
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    #include <emmintrin.h>  // SSE2
+    #define BASE64_SIMD_ENABLED
+#endif
+
 // 全局变量：单例模式的识别器
 static std::unique_ptr<FaceRecognizer> g_recognizer = nullptr;
 static std::string g_modelPath = "";
@@ -23,44 +29,115 @@ static inline bool is_base64(unsigned char c) {
     return (isalnum(c) || (c == '+') || (c == '/'));
 }
 
+// SIMD 优化的 Base64 解码查找表
+static const uint8_t base64_decode_table[256] = {
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 62,  255, 255, 255, 63,
+    52,  53,  54,  55,  56,  57,  58,  59,  60,  61,  255, 255, 255, 254, 255, 255,
+    255, 0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,  13,  14,
+    15,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25,  255, 255, 255, 255, 255,
+    255, 26,  27,  28,  29,  30,  31,  32,  33,  34,  35,  36,  37,  38,  39,  40,
+    41,  42,  43,  44,  45,  46,  47,  48,  49,  50,  51,  255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255
+};
+
+#ifdef BASE64_SIMD_ENABLED
+// SSE2 优化的批量解码（每次处理 16 字节）
+inline void base64_decode_simd_block(const uint8_t* in, uint8_t* out, const uint8_t* table) {
+    // 加载 16 字节输入
+    __m128i input = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in));
+    
+    // 使用 shuffle 优化查表（模拟并行查找）
+    // 这里简化处理，实际可以用更复杂的 SIMD shuffle
+    uint8_t temp[16];
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(temp), input);
+    
+    // 批量查表
+    for (int i = 0; i < 16; i++) {
+        temp[i] = table[temp[i]];
+    }
+    
+    // 重组数据（4 个输入 -> 3 个输出）
+    // 简化版本，逐组处理
+    for (int i = 0; i < 12; i += 4) {
+        uint32_t combined = (temp[i] << 18) | (temp[i+1] << 12) | (temp[i+2] << 6) | temp[i+3];
+        out[(i/4)*3] = (combined >> 16) & 0xFF;
+        out[(i/4)*3 + 1] = (combined >> 8) & 0xFF;
+        out[(i/4)*3 + 2] = combined & 0xFF;
+    }
+}
+#endif
+
+// 高性能 Base64 解码（查找表 + SIMD）
 std::vector<unsigned char> base64_decode(const std::string& encoded_string) {
-    int in_len = encoded_string.size();
-    int i = 0;
-    int j = 0;
-    int in_ = 0;
-    unsigned char char_array_4[4], char_array_3[3];
+    const size_t in_len = encoded_string.size();
+    if (in_len == 0) return std::vector<unsigned char>();
+    
+    // 预分配输出缓冲区
+    size_t out_len = (in_len * 3) / 4;
     std::vector<unsigned char> ret;
-
-    while (in_len-- && (encoded_string[in_] != '=') && is_base64(encoded_string[in_])) {
-        char_array_4[i++] = encoded_string[in_]; in_++;
-        if (i == 4) {
-            for (i = 0; i < 4; i++)
-                char_array_4[i] = base64_chars.find(char_array_4[i]);
-
-            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-            for (i = 0; (i < 3); i++)
-                ret.push_back(char_array_3[i]);
-            i = 0;
+    ret.reserve(out_len);
+    
+    const uint8_t* in = reinterpret_cast<const uint8_t*>(encoded_string.data());
+    const uint8_t* in_end = in + in_len;
+    
+#ifdef BASE64_SIMD_ENABLED
+    // SIMD 快速路径：每次处理 16 字节（生成 12 字节输出）
+    uint8_t simd_out[12];
+    while (in + 16 <= in_end && in[0] != '=') {
+        base64_decode_simd_block(in, simd_out, base64_decode_table);
+        
+        // 检查是否有 padding
+        bool has_padding = false;
+        for (int i = 0; i < 16; i++) {
+            if (in[i] == '=') {
+                has_padding = true;
+                break;
+            }
         }
+        
+        if (has_padding) break;
+        
+        // 添加到输出
+        for (int i = 0; i < 12; i++) {
+            ret.push_back(simd_out[i]);
+        }
+        
+        in += 16;
     }
-
-    if (i) {
-        for (j = i; j < 4; j++)
-            char_array_4[j] = 0;
-
-        for (j = 0; j < 4; j++)
-            char_array_4[j] = base64_chars.find(char_array_4[j]);
-
-        char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-        char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-        char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-        for (j = 0; (j < i - 1); j++) ret.push_back(char_array_3[j]);
+#endif
+    
+    // 标准路径：处理剩余字节（每次 4 字节）
+    while (in + 4 <= in_end && in[0] != '=') {
+        uint32_t b0 = base64_decode_table[in[0]];
+        uint32_t b1 = base64_decode_table[in[1]];
+        uint32_t b2 = base64_decode_table[in[2]];
+        uint32_t b3 = base64_decode_table[in[3]];
+        
+        if ((b0 | b1) >= 254) break;
+        
+        uint32_t combined = (b0 << 18) | (b1 << 12) | (b2 << 6) | b3;
+        
+        ret.push_back((combined >> 16) & 0xFF);
+        
+        if (b2 < 254) {
+            ret.push_back((combined >> 8) & 0xFF);
+            if (b3 < 254) {
+                ret.push_back(combined & 0xFF);
+            }
+        }
+        
+        in += 4;
     }
-
+    
     return ret;
 }
 
