@@ -500,11 +500,16 @@ void FaceRecognizer::setupGPU() {
         // TensorRT 优先（性能最好）
         OrtTensorRTProviderOptions trt_options;
         trt_options.device_id = deviceId_;
-        trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024;
-        trt_options.trt_fp16_enable = 1;
+        // trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024;
+        // trt_options.trt_fp16_enable = 1;
+        
+        // ⭐ 关键：设置引擎缓存路径，避免每次重新构建
+        trt_options.trt_engine_cache_enable = 1;
+        trt_options.trt_engine_cache_path = "./trt_cache";  // 缓存目录
         
         sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
         std::cout << "✓ TensorRT provider added (device: " << deviceId_ << ", FP16: ON)" << std::endl;
+        std::cout << "  Engine cache: ./trt_cache (first run will be slow, then fast)" << std::endl;
 #endif
 
 #ifdef USE_CUDA

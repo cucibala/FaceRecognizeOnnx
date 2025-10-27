@@ -372,8 +372,13 @@ void FaceDetector::setupGPU() {
         trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024; // 2GB
         trt_options.trt_fp16_enable = 1; // 启用 FP16 加速
         
+        // ⭐ 关键：设置引擎缓存路径
+        trt_options.trt_engine_cache_enable = 1;
+        trt_options.trt_engine_cache_path = "./trt_cache";
+        
         sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
         std::cout << "✓ TensorRT provider enabled for detector (GPU device: " << deviceId_ << ", FP16: ON)" << std::endl;
+        std::cout << "  Engine cache: ./trt_cache" << std::endl;
 #endif
 
 #ifdef USE_CUDA
