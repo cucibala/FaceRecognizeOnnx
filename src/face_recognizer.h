@@ -19,6 +19,9 @@ public:
     std::vector<std::vector<float>> extractFeaturesBatch(const std::vector<cv::Mat>& images);
     std::vector<std::vector<float>> extractFeaturesBatchSimple(const std::vector<cv::Mat>& images);
     
+    // TensorRT 引擎预热（提前构建常用 batch size 的引擎）
+    void warmupTensorRT(const std::vector<int>& batchSizes = {1, 16, 32});
+    
     float compareFaces(const std::vector<float>& feature1, const std::vector<float>& feature2);
     
 private:

@@ -499,6 +499,7 @@ void FaceRecognizer::setupGPU() {
         
 #ifdef USE_TENSORRT
         // TensorRT - 尝试添加，失败则跳过
+        // 如果不想等待引擎构建，可以注释掉整个 TensorRT 块，只用 CUDA
         try {
             std::cout << "  Attempting to add TensorRT provider..." << std::endl;
             
@@ -520,7 +521,10 @@ void FaceRecognizer::setupGPU() {
             std::cout << "  Device: " << deviceId_ << std::endl;
             std::cout << "  FP16: Enabled" << std::endl;
             std::cout << "  Cache path: ./trt_cache" << std::endl;
-            std::cout << "  ⚠️  First run: Engine building (1-5 min), then cached" << std::endl;
+            std::cout << "\n⚠️  IMPORTANT: TensorRT Engine Building Notes" << std::endl;
+            std::cout << "  - First run with each NEW batch size: 1-5 min (building engine)" << std::endl;
+            std::cout << "  - Subsequent runs: Fast (engine cached in ./trt_cache)" << std::endl;
+            std::cout << "  - If program seems frozen during inference: WAIT, engine is building!" << std::endl;
         } catch (const Ort::Exception& e) {
             std::cerr << "⚠️  TensorRT provider failed: " << e.what() << std::endl;
             std::cerr << "   This is OK, will use CUDA instead" << std::endl;
@@ -554,6 +558,67 @@ void FaceRecognizer::setupGPU() {
         std::cerr << "Error setting up GPU: " << e.what() << std::endl;
         std::cerr << "Using CPU execution" << std::endl;
     }
+}
+
+void FaceRecognizer::warmupTensorRT(const std::vector<int>& batchSizes) {
+    if (!session_ || !useGPU_) {
+        std::cout << "Skipping warmup: model not loaded or GPU not enabled" << std::endl;
+        return;
+    }
+    
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "  TensorRT Engine Warmup" << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << "Building TensorRT engines for batch sizes: ";
+    for (size_t i = 0; i < batchSizes.size(); i++) {
+        std::cout << batchSizes[i];
+        if (i < batchSizes.size() - 1) std::cout << ", ";
+    }
+    std::cout << std::endl;
+    std::cout << "This may take 1-5 minutes, but only runs once..." << std::endl;
+    std::cout << std::endl;
+    
+    auto warmupStart = std::chrono::high_resolution_clock::now();
+    
+    for (int batchSize : batchSizes) {
+        std::cout << "📦 Building engine for batch=" << batchSize << "..." << std::flush;
+        auto start = std::chrono::high_resolution_clock::now();
+        
+        // 创建虚拟输入数据
+        const int singleImageSize = 3 * inputHeight_ * inputWidth_;
+        std::vector<float> dummyData(batchSize * singleImageSize, 0.0f);
+        
+        std::vector<int64_t> inputShapeBatch = {static_cast<int64_t>(batchSize), 3, inputHeight_, inputWidth_};
+        auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
+            memoryInfo, dummyData.data(), dummyData.size(),
+            inputShapeBatch.data(), inputShapeBatch.size()
+        );
+        
+        try {
+            // 运行一次推理以触发 TensorRT 引擎构建
+            auto outputTensors = session_->Run(
+                Ort::RunOptions{nullptr},
+                inputNamePtrs_.data(), &inputTensor, 1,
+                outputNamePtrs_.data(), outputNamePtrs_.size()
+            );
+            
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+            
+            std::cout << " ✓ Done in " << duration << " ms" << std::endl;
+        } catch (const Ort::Exception& e) {
+            std::cerr << " ✗ Failed: " << e.what() << std::endl;
+        }
+    }
+    
+    auto warmupEnd = std::chrono::high_resolution_clock::now();
+    auto totalWarmupTime = std::chrono::duration_cast<std::chrono::milliseconds>(warmupEnd - warmupStart).count();
+    
+    std::cout << "\n✓ Warmup completed in " << totalWarmupTime << " ms" << std::endl;
+    std::cout << "  All engines cached in ./trt_cache/" << std::endl;
+    std::cout << "  Future runs will be fast!" << std::endl;
+    std::cout << "========================================\n" << std::endl;
 }
 
 float FaceRecognizer::compareFaces(const std::vector<float>& feature1, const std::vector<float>& feature2) {

@@ -122,6 +122,12 @@ extern "C" int FR_InitializeWithGPU(const char* model_path, bool use_gpu, int de
         g_initialized = true;
         std::cout << "Face recognizer initialized successfully" << std::endl;
         
+        // TensorRT 引擎预热（提前构建常用 batch size 的引擎）
+        if (use_gpu) {
+            std::cout << "\nStarting TensorRT warmup..." << std::endl;
+            g_recognizer->warmupTensorRT({1, 16, 32});  // 预热常用的 batch size
+        }
+        
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "Exception in FR_Initialize: " << e.what() << std::endl;
