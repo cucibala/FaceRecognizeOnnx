@@ -329,34 +329,74 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
         for (int i = 0; i < batchSize; i++) {
             int offset = i * singleImageSize;
             
-            if (images[i].empty()) {
-                continue;
-            }
+            try {
+                if (images[i].empty()) {
+                    std::cerr << "Preprocess: Image " << i << " is empty" << std::endl;
+                    continue;
+                }
+                
+                // 验证图片有效性
+                if (images[i].cols <= 0 || images[i].rows <= 0) {
+                    std::cerr << "Preprocess: Image " << i << " has invalid size: " 
+                              << images[i].cols << "x" << images[i].rows << std::endl;
+                    continue;
+                }
+                
+                // 验证图片类型
+                if (images[i].type() != CV_8UC3 && images[i].type() != CV_8UC1) {
+                    std::cerr << "Preprocess: Image " << i << " has unsupported type: " 
+                              << images[i].type() << " (expected CV_8UC3 or CV_8UC1)" << std::endl;
+                    continue;
+                }
 
-            // Resize
-            cv::Mat resized;
-            cv::resize(images[i], resized, cv::Size(inputWidth_, inputHeight_));
-            
-            // BGR转RGB并归一化（优化版本）
-            cv::Mat rgb;
-            cv::cvtColor(resized, rgb, cv::COLOR_BGR2RGB);
-            
-            // 直接写入批次数据（避免额外的 vector 复制）
-            for (int c = 0; c < 3; ++c) {
-                for (int h = 0; h < inputHeight_; ++h) {
-                    for (int w = 0; w < inputWidth_; ++w) {
-                        int idx = offset + c * inputHeight_ * inputWidth_ + h * inputWidth_ + w;
-                        batchInputData[idx] = (rgb.at<cv::Vec3b>(h, w)[c] - 127.5f) / 128.0f;
+                // Resize
+                cv::Mat resized;
+                cv::resize(images[i], resized, cv::Size(inputWidth_, inputHeight_));
+                
+                // BGR转RGB并归一化（优化版本）
+                cv::Mat rgb;
+                if (resized.channels() == 1) {
+                    cv::cvtColor(resized, rgb, cv::COLOR_GRAY2RGB);
+                } else {
+                    cv::cvtColor(resized, rgb, cv::COLOR_BGR2RGB);
+                }
+                
+                // 直接写入批次数据（避免额外的 vector 复制）
+                for (int c = 0; c < 3; ++c) {
+                    for (int h = 0; h < inputHeight_; ++h) {
+                        for (int w = 0; w < inputWidth_; ++w) {
+                            int idx = offset + c * inputHeight_ * inputWidth_ + h * inputWidth_ + w;
+                            batchInputData[idx] = (rgb.at<cv::Vec3b>(h, w)[c] - 127.5f) / 128.0f;
+                        }
                     }
                 }
+                
+                validFlags[i] = true;
+            } catch (const cv::Exception& e) {
+                std::cerr << "Preprocess: OpenCV exception for image " << i << ": " << e.what() << std::endl;
+            } catch (const std::exception& e) {
+                std::cerr << "Preprocess: Exception for image " << i << ": " << e.what() << std::endl;
+            } catch (...) {
+                std::cerr << "Preprocess: Unknown exception for image " << i << std::endl;
             }
-            
-            validFlags[i] = true;
         }
         
         auto tp2 = std::chrono::high_resolution_clock::now();
         auto preprocessTime = std::chrono::duration_cast<std::chrono::milliseconds>(tp2 - tp1).count();
-        std::cout << "Preprocess time: " << preprocessTime << " ms" << std::endl;
+        
+        // 统计预处理成功数量
+        int validCount = 0;
+        for (int i = 0; i < batchSize; i++) {
+            if (validFlags[i]) validCount++;
+        }
+        
+        std::cout << "Preprocess time: " << preprocessTime << " ms (" 
+                  << validCount << "/" << batchSize << " images valid)" << std::endl;
+        
+        if (validCount < batchSize) {
+            std::cerr << "WARNING: " << (batchSize - validCount) 
+                      << " images failed preprocessing!" << std::endl;
+        }
         
         // ===== 时间测量：创建tensor =====
         auto tt1 = std::chrono::high_resolution_clock::now();
