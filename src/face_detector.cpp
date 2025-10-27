@@ -55,13 +55,6 @@ bool FaceDetector::loadModel(const std::string& modelPath) {
                 if (modelWidth > 0) {
                     inputWidth_ = static_cast<int>(modelWidth);
                 }
-                
-                std::cout << "Model input shape: [" << inputShape_[0] << ", " << inputShape_[1] 
-                          << ", " << inputShape_[2] << ", " << inputShape_[3] << "]" << std::endl;
-                if (modelHeight <= 0 || modelWidth <= 0) {
-                    std::cout << "Note: Dynamic dimensions detected (-1), using default size: " 
-                              << inputWidth_ << "x" << inputHeight_ << std::endl;
-                }
             }
         }
         
@@ -233,8 +226,6 @@ std::vector<FaceBox> FaceDetector::postprocess(const std::vector<float>& outputs
                                                 const std::vector<int64_t>& outputShape,
                                                 float scale, float scoreThreshold, float nmsThreshold) {
     std::vector<FaceBox> boxes;
-    
-    std::cout << "Postprocessing with shape size: " << outputShape.size() << std::endl;
     if (outputShape.size() > 0) {
         std::cout << "Shape dimensions: ";
         for (auto dim : outputShape) {
@@ -251,9 +242,6 @@ std::vector<FaceBox> FaceDetector::postprocess(const std::vector<float>& outputs
         // 格式: [batch, num_anchors, 15+]
         int numAnchors = static_cast<int>(outputShape[1]);
         int featDim = static_cast<int>(outputShape[2]);
-        
-        std::cout << "Processing " << numAnchors << " anchors with " << featDim << " features" << std::endl;
-        
         for (int i = 0; i < numAnchors; i++) {
             int offset = i * featDim;
             float score = outputs[offset + 4];
@@ -288,9 +276,6 @@ std::vector<FaceBox> FaceDetector::postprocess(const std::vector<float>& outputs
         // 格式: [num_detections, 15+]
         int numDetections = static_cast<int>(outputShape[0]);
         int featDim = static_cast<int>(outputShape[1]);
-        
-        std::cout << "Processing " << numDetections << " detections with " << featDim << " features" << std::endl;
-        
         for (int i = 0; i < numDetections; i++) {
             int offset = i * featDim;
             
