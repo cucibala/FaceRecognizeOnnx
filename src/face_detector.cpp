@@ -2,6 +2,11 @@
 #include <algorithm>
 #include <iostream>
 
+// SCRFD 核心函数前置声明
+static cv::Rect distance2bbox(const cv::Point2f& anchor_center, const float* distance, float scale);
+static void distance2kps(const cv::Point2f& anchor_center, const float* distance, 
+                         cv::Point2f* kps, int num_kps, float scale);
+
 FaceDetector::FaceDetector(bool useGPU, int deviceId) 
     : env_(ORT_LOGGING_LEVEL_ERROR, "FaceDetector"),  // 改为 ERROR 级别，忽略警告
       session_(nullptr),
@@ -213,9 +218,9 @@ std::vector<FaceBox> FaceDetector::detect(const cv::Mat& image, float scoreThres
         for (int idx = 0; idx < fmc; idx++) {
             int stride = feat_stride_fpn[idx];
             
-            // 获取 scores, bbox_preds, kps_preds
-            auto scores_tensor = outputTensors[idx];
-            auto bbox_preds_tensor = outputTensors[idx + fmc];
+            // 获取 scores, bbox_preds, kps_preds（使用引用，避免复制）
+            auto& scores_tensor = outputTensors[idx];
+            auto& bbox_preds_tensor = outputTensors[idx + fmc];
             
             auto scores_shape = scores_tensor.GetTensorTypeAndShapeInfo().GetShape();
             float* scores_data = scores_tensor.GetTensorMutableData<float>();
@@ -223,7 +228,8 @@ std::vector<FaceBox> FaceDetector::detect(const cv::Mat& image, float scoreThres
             
             float* kps_preds_data = nullptr;
             if (use_kps) {
-                kps_preds_data = outputTensors[idx + fmc * 2].GetTensorMutableData<float>();
+                auto& kps_preds_tensor = outputTensors[idx + fmc * 2];
+                kps_preds_data = kps_preds_tensor.GetTensorMutableData<float>();
             }
             
             // 计算特征图尺寸
@@ -285,7 +291,7 @@ std::vector<FaceBox> FaceDetector::detect(const cv::Mat& image, float scoreThres
 }
 
 // SCRFD 核心函数：distance2bbox（从 distance 解码为 bbox）
-cv::Rect distance2bbox(const cv::Point2f& anchor_center, const float* distance, float scale) {
+static cv::Rect distance2bbox(const cv::Point2f& anchor_center, const float* distance, float scale) {
     float x1 = (anchor_center.x - distance[0]) / scale;
     float y1 = (anchor_center.y - distance[1]) / scale;
     float x2 = (anchor_center.x + distance[2]) / scale;
@@ -295,8 +301,8 @@ cv::Rect distance2bbox(const cv::Point2f& anchor_center, const float* distance, 
 }
 
 // SCRFD 核心函数：distance2kps（从 distance 解码为关键点）
-void distance2kps(const cv::Point2f& anchor_center, const float* distance, 
-                  cv::Point2f* kps, int num_kps, float scale) {
+static void distance2kps(const cv::Point2f& anchor_center, const float* distance, 
+                         cv::Point2f* kps, int num_kps, float scale) {
     for (int i = 0; i < num_kps; i++) {
         kps[i].x = (anchor_center.x + distance[i * 2]) / scale;
         kps[i].y = (anchor_center.y + distance[i * 2 + 1]) / scale;
