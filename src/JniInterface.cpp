@@ -296,6 +296,7 @@ static void processBatchLocked() {
             result->status = 0;
         } else {
             result->status = -12;
+            std::cout << "Batch inference failed for image " << i << std::endl;
         }
     }
     
