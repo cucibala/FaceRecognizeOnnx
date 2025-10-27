@@ -2,14 +2,22 @@
 #include <cmath>
 #include <iostream>
 
-FaceRecognizer::FaceRecognizer()
+FaceRecognizer::FaceRecognizer(bool useGPU, int deviceId)
     : env_(ORT_LOGGING_LEVEL_WARNING, "FaceRecognizer"),
       session_(nullptr),
       inputWidth_(112),
       inputHeight_(112),
-      featureDim_(512) {
+      featureDim_(512),
+      useGPU_(useGPU),
+      deviceId_(deviceId) {
+    
     sessionOptions_.SetIntraOpNumThreads(4);
     sessionOptions_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    
+    // 如果启用 GPU，配置 GPU 选项
+    if (useGPU_) {
+        setupGPU();
+    }
 }
 
 FaceRecognizer::~FaceRecognizer() {
@@ -461,6 +469,44 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatch(const std::
     }
     
     return features;
+}
+
+void FaceRecognizer::setupGPU() {
+    try {
+        std::cout << "Configuring GPU support..." << std::endl;
+        
+#ifdef USE_CUDA
+        OrtCUDAProviderOptions cuda_options;
+        cuda_options.device_id = deviceId_;
+        cuda_options.arena_extend_strategy = 0;
+        cuda_options.gpu_mem_limit = 2ULL * 1024 * 1024 * 1024; // 2GB
+        cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchExhaustive;
+        cuda_options.do_copy_in_default_stream = 1;
+        
+        sessionOptions_.AppendExecutionProvider_CUDA(cuda_options);
+        std::cout << "CUDA provider enabled (device: " << deviceId_ << ")" << std::endl;
+#endif
+
+#ifdef USE_TENSORRT
+        OrtTensorRTProviderOptions trt_options;
+        trt_options.device_id = deviceId_;
+        trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024; // 2GB
+        trt_options.trt_fp16_enable = 1;
+        
+        sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
+        std::cout << "TensorRT provider enabled (device: " << deviceId_ << ")" << std::endl;
+#endif
+
+        if (!defined(USE_CUDA) && !defined(USE_TENSORRT)) {
+            std::cerr << "Warning: GPU requested but not compiled with CUDA/TensorRT support!" << std::endl;
+            std::cerr << "Please recompile with -DUSE_CUDA=ON or -DUSE_TENSORRT=ON" << std::endl;
+            std::cerr << "Falling back to CPU execution" << std::endl;
+        }
+        
+    } catch (const Ort::Exception& e) {
+        std::cerr << "Error setting up GPU: " << e.what() << std::endl;
+        std::cerr << "Falling back to CPU execution" << std::endl;
+    }
 }
 
 float FaceRecognizer::compareFaces(const std::vector<float>& feature1, const std::vector<float>& feature2) {

@@ -13,7 +13,7 @@ struct FaceBox {
 
 class FaceDetector {
 public:
-    FaceDetector();
+    FaceDetector(bool useGPU = false, int deviceId = 0);
     ~FaceDetector();
     
     bool loadModel(const std::string& modelPath);
@@ -26,11 +26,15 @@ private:
                                       float scale, float scoreThreshold, float nmsThreshold);
     float iou(const cv::Rect& box1, const cv::Rect& box2);
     void nms(std::vector<FaceBox>& boxes, float threshold);
+    void setupGPU();
     
     Ort::Env env_;
     Ort::Session* session_;
     Ort::SessionOptions sessionOptions_;
     Ort::AllocatorWithDefaultOptions allocator_;
+    
+    bool useGPU_;
+    int deviceId_;
     
     std::vector<std::string> inputNames_;
     std::vector<std::string> outputNames_;

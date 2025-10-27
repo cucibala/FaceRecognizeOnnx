@@ -8,7 +8,7 @@
 
 class FaceRecognizer {
 public:
-    FaceRecognizer();
+    FaceRecognizer(bool useGPU = false, int deviceId = 0);
     ~FaceRecognizer();
     
     bool loadModel(const std::string& modelPath);
@@ -25,11 +25,15 @@ private:
     cv::Mat alignFace(const cv::Mat& image, const FaceBox& face);
     void preprocess(const cv::Mat& aligned, std::vector<float>& inputData);
     void normalize(std::vector<float>& feature);
+    void setupGPU();
     
     Ort::Env env_;
     Ort::Session* session_;
     Ort::SessionOptions sessionOptions_;
     Ort::AllocatorWithDefaultOptions allocator_;
+    
+    bool useGPU_;
+    int deviceId_;
     
     std::vector<std::string> inputNames_;
     std::vector<std::string> outputNames_;

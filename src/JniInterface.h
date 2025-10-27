@@ -36,6 +36,9 @@ extern "C" void FR_FreeBatchResults(BatchImageOutput* output);
 // 初始化接口：加载模型（可选，也可在第一次调用时自动加载）
 extern "C" int FR_Initialize(const char* model_path);
 
+// 初始化接口（带 GPU 选项）：use_gpu=true 启用 GPU，device_id 指定设备
+extern "C" int FR_InitializeWithGPU(const char* model_path, bool use_gpu, int device_id);
+
 // 清理接口：释放识别器资源
 extern "C" void FR_Cleanup();
 

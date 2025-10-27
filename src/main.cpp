@@ -273,19 +273,44 @@ int main(int argc, char** argv) {
     std::cout << "InsightFace C++ Demo - buffalo_sc 模型" << std::endl;
     std::cout << "========================================" << std::endl;
     
+    // 检查是否启用 GPU
+    bool useGPU = false;
+    int deviceId = 0;
+    
+#ifdef USE_CUDA
+    useGPU = true;
+    std::cout << "CUDA support: ENABLED" << std::endl;
+#else
+    std::cout << "CUDA support: DISABLED" << std::endl;
+#endif
+
+#ifdef USE_TENSORRT
+    useGPU = true;
+    std::cout << "TensorRT support: ENABLED" << std::endl;
+#else
+    std::cout << "TensorRT support: DISABLED" << std::endl;
+#endif
+
+    if (useGPU) {
+        std::cout << "Using GPU device: " << deviceId << std::endl;
+    } else {
+        std::cout << "Using CPU" << std::endl;
+    }
+    std::cout << "========================================" << std::endl;
+    
     // 模型路径
     std::string detectorModelPath = "models/det_500m.onnx";
     std::string recognizerModelPath = "models/w600k_mbf.onnx";
     
     // 加载检测模型
-    FaceDetector detector;
+    FaceDetector detector(useGPU, deviceId);
     if (!detector.loadModel(detectorModelPath)) {
         std::cerr << "无法加载人脸检测模型: " << detectorModelPath << std::endl;
         return -1;
     }
     
     // 加载识别模型
-    FaceRecognizer recognizer;
+    FaceRecognizer recognizer(useGPU, deviceId);
     if (!recognizer.loadModel(recognizerModelPath)) {
         std::cerr << "无法加载人脸识别模型: " << recognizerModelPath << std::endl;
         return -1;

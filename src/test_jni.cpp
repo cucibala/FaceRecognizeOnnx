@@ -140,16 +140,17 @@ void testBatchPerformance(const char* modelPath, const std::string& imagePath, i
     FR_FreeBatchResults(&output);
 }
 
-void runBenchmark(const char* modelPath, const std::string& imagePath) {
+void runBenchmark(const char* modelPath, const std::string& imagePath, bool useGPU, int deviceId) {
     std::cout << "========================================" << std::endl;
     std::cout << "  Batch Processing Performance Test" << std::endl;
     std::cout << "========================================" << std::endl;
     std::cout << "Model: " << modelPath << std::endl;
     std::cout << "Image: " << imagePath << std::endl;
+    std::cout << "Device: " << (useGPU ? ("GPU " + std::to_string(deviceId)) : "CPU") << std::endl;
     
     // 初始化
     std::cout << "\nInitializing model..." << std::endl;
-    int ret = FR_Initialize(modelPath);
+    int ret = FR_InitializeWithGPU(modelPath, useGPU, deviceId);
     if (ret != 0) {
         std::cerr << "Initialization failed with code: " << ret << std::endl;
         return;
@@ -270,12 +271,17 @@ void runBenchmark(const char* modelPath, const std::string& imagePath) {
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::cout << "Usage: " << argv[0] << " <model_path> <image_path>" << std::endl;
+        std::cout << "Usage: " << argv[0] << " <model_path> <image_path> [--gpu] [--device <id>]" << std::endl;
         std::cout << "\nDescription:" << std::endl;
         std::cout << "  This tool tests batch processing performance with different batch sizes." << std::endl;
         std::cout << "  It will test batch sizes: 1, 16, and 32" << std::endl;
-        std::cout << "\nExample:" << std::endl;
+        std::cout << "\nOptions:" << std::endl;
+        std::cout << "  --gpu         Enable GPU acceleration (requires GPU build)" << std::endl;
+        std::cout << "  --device <id> Specify GPU device ID (default: 0)" << std::endl;
+        std::cout << "\nExamples:" << std::endl;
         std::cout << "  " << argv[0] << " models/w600k_mbf.onnx test.jpg" << std::endl;
+        std::cout << "  " << argv[0] << " models/w600k_mbf.onnx test.jpg --gpu" << std::endl;
+        std::cout << "  " << argv[0] << " models/w600k_mbf.onnx test.jpg --gpu --device 1" << std::endl;
         std::cout << "\nOutput:" << std::endl;
         std::cout << "  - Processing time for each batch size" << std::endl;
         std::cout << "  - Average time per image" << std::endl;
@@ -287,7 +293,20 @@ int main(int argc, char** argv) {
     const char* modelPath = argv[1];
     const char* imagePath = argv[2];
     
-    runBenchmark(modelPath, imagePath);
+    bool useGPU = false;
+    int deviceId = 0;
+    
+    // 解析命令行参数
+    for (int i = 3; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--gpu") {
+            useGPU = true;
+        } else if (arg == "--device" && i + 1 < argc) {
+            deviceId = std::atoi(argv[++i]);
+        }
+    }
+    
+    runBenchmark(modelPath, imagePath, useGPU, deviceId);
     
     return 0;
 }

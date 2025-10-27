@@ -90,6 +90,11 @@ cv::Mat base64ToMat(const char* base64_str, int str_len) {
 
 // 初始化识别器（可选，也可以在 ProcessBatchImages 中自动初始化）
 extern "C" int FR_Initialize(const char* model_path) {
+    return FR_InitializeWithGPU(model_path, false, 0);
+}
+
+// 初始化识别器（带 GPU 选项）
+extern "C" int FR_InitializeWithGPU(const char* model_path, bool use_gpu, int device_id) {
     try {
         if (g_initialized && g_modelPath == model_path) {
             std::cout << "Model already initialized" << std::endl;
@@ -97,8 +102,13 @@ extern "C" int FR_Initialize(const char* model_path) {
         }
         
         std::cout << "Initializing face recognizer with model: " << model_path << std::endl;
+        if (use_gpu) {
+            std::cout << "GPU mode enabled (device: " << device_id << ")" << std::endl;
+        } else {
+            std::cout << "CPU mode" << std::endl;
+        }
         
-        g_recognizer = std::make_unique<FaceRecognizer>();
+        g_recognizer = std::make_unique<FaceRecognizer>(use_gpu, device_id);
         
         if (!g_recognizer->loadModel(model_path)) {
             std::cerr << "Failed to load model: " << model_path << std::endl;
