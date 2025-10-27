@@ -37,8 +37,23 @@ bool FaceDetector::loadModel(const std::string& modelPath) {
             inputShape_ = tensorInfo.GetShape();
             
             if (inputShape_.size() == 4) {
-                inputHeight_ = static_cast<int>(inputShape_[2]);
-                inputWidth_ = static_cast<int>(inputShape_[3]);
+                // 检查是否为动态维度（-1），如果是则保持默认值
+                int64_t modelHeight = inputShape_[2];
+                int64_t modelWidth = inputShape_[3];
+                
+                if (modelHeight > 0) {
+                    inputHeight_ = static_cast<int>(modelHeight);
+                }
+                if (modelWidth > 0) {
+                    inputWidth_ = static_cast<int>(modelWidth);
+                }
+                
+                std::cout << "Model input shape: [" << inputShape_[0] << ", " << inputShape_[1] 
+                          << ", " << inputShape_[2] << ", " << inputShape_[3] << "]" << std::endl;
+                if (modelHeight <= 0 || modelWidth <= 0) {
+                    std::cout << "Note: Dynamic dimensions detected (-1), using default size: " 
+                              << inputWidth_ << "x" << inputHeight_ << std::endl;
+                }
             }
         }
         
@@ -50,8 +65,7 @@ bool FaceDetector::loadModel(const std::string& modelPath) {
         }
         
         std::cout << "Face detector model loaded successfully!" << std::endl;
-        std::cout << "Input shape: [" << inputShape_[0] << ", " << inputShape_[1] 
-                  << ", " << inputShape_[2] << ", " << inputShape_[3] << "]" << std::endl;
+        std::cout << "Using input size: " << inputWidth_ << "x" << inputHeight_ << std::endl;
         
         return true;
     } catch (const Ort::Exception& e) {
@@ -130,6 +144,12 @@ std::vector<FaceBox> FaceDetector::detect(const cv::Mat& image, float scoreThres
     std::vector<float> inputData;
     float scale;
     preprocess(image, inputData, scale);
+    
+    // 检查预处理结果
+    if (inputData.empty()) {
+        std::cerr << "Preprocessing failed!" << std::endl;
+        return faces;
+    }
     
     // 创建输入tensor
     std::vector<int64_t> inputShapeBatch = {1, 3, inputHeight_, inputWidth_};

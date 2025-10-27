@@ -38,8 +38,23 @@ bool FaceRecognizer::loadModel(const std::string& modelPath) {
             inputShape_ = tensorInfo.GetShape();
             
             if (inputShape_.size() == 4) {
-                inputHeight_ = static_cast<int>(inputShape_[2]);
-                inputWidth_ = static_cast<int>(inputShape_[3]);
+                // 检查是否为动态维度（-1），如果是则保持默认值
+                int64_t modelHeight = inputShape_[2];
+                int64_t modelWidth = inputShape_[3];
+                
+                if (modelHeight > 0) {
+                    inputHeight_ = static_cast<int>(modelHeight);
+                }
+                if (modelWidth > 0) {
+                    inputWidth_ = static_cast<int>(modelWidth);
+                }
+                
+                std::cout << "Model input shape: [" << inputShape_[0] << ", " << inputShape_[1] 
+                          << ", " << inputShape_[2] << ", " << inputShape_[3] << "]" << std::endl;
+                if (modelHeight <= 0 || modelWidth <= 0) {
+                    std::cout << "Note: Dynamic dimensions detected (-1), using default size: " 
+                              << inputWidth_ << "x" << inputHeight_ << std::endl;
+                }
             }
         }
         
@@ -51,8 +66,7 @@ bool FaceRecognizer::loadModel(const std::string& modelPath) {
         }
         
         std::cout << "Face recognizer model loaded successfully!" << std::endl;
-        std::cout << "Input shape: [" << inputShape_[0] << ", " << inputShape_[1] 
-                  << ", " << inputShape_[2] << ", " << inputShape_[3] << "]" << std::endl;
+        std::cout << "Using input size: " << inputWidth_ << "x" << inputHeight_ << std::endl;
         
         return true;
     } catch (const Ort::Exception& e) {
@@ -62,6 +76,12 @@ bool FaceRecognizer::loadModel(const std::string& modelPath) {
 }
 
 cv::Mat FaceRecognizer::alignFace(const cv::Mat& image, const FaceBox& face) {
+    // 验证输入
+    if (image.empty()) {
+        std::cerr << "Empty image in alignFace" << std::endl;
+        return cv::Mat();
+    }
+    
     // 标准5点模板（112x112图像）
     cv::Point2f dstLandmarks[5] = {
         cv::Point2f(38.2946f, 51.6963f),  // 左眼
@@ -76,6 +96,20 @@ cv::Mat FaceRecognizer::alignFace(const cv::Mat& image, const FaceBox& face) {
         std::vector<cv::Point2f>(face.landmarks, face.landmarks + 5),
         std::vector<cv::Point2f>(dstLandmarks, dstLandmarks + 5)
     );
+    
+    // 检查变换矩阵是否有效
+    if (M.empty()) {
+        std::cerr << "Failed to compute affine transformation" << std::endl;
+        // 如果无法计算变换，直接裁剪并缩放人脸区域
+        cv::Rect safeFace = face.box & cv::Rect(0, 0, image.cols, image.rows);
+        if (safeFace.width > 0 && safeFace.height > 0) {
+            cv::Mat cropped = image(safeFace);
+            cv::Mat resized;
+            cv::resize(cropped, resized, cv::Size(inputWidth_, inputHeight_));
+            return resized;
+        }
+        return cv::Mat();
+    }
     
     cv::Mat aligned;
     cv::warpAffine(image, aligned, M, cv::Size(inputWidth_, inputHeight_));
@@ -108,12 +142,30 @@ std::vector<float> FaceRecognizer::extractFeature(const cv::Mat& image, const Fa
         return feature;
     }
     
+    // 验证输入
+    if (image.empty()) {
+        std::cerr << "Input image is empty!" << std::endl;
+        return feature;
+    }
+    
     // 对齐人脸
     cv::Mat aligned = alignFace(image, face);
+    
+    // 检查对齐结果
+    if (aligned.empty()) {
+        std::cerr << "Face alignment failed!" << std::endl;
+        return feature;
+    }
     
     // 预处理
     std::vector<float> inputData;
     preprocess(aligned, inputData);
+    
+    // 检查预处理结果
+    if (inputData.empty()) {
+        std::cerr << "Preprocessing failed!" << std::endl;
+        return feature;
+    }
     
     // 创建输入tensor
     std::vector<int64_t> inputShapeBatch = {1, 3, inputHeight_, inputWidth_};
