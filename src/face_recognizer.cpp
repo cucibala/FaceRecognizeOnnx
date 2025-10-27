@@ -339,8 +339,6 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
     }
     
     int batchSize = images.size();
-    std::cout << "Processing batch of " << batchSize << " images" << std::endl;
-    
     try {
         // 预处理所有图片
         std::vector<float> batchInputData;
@@ -350,16 +348,12 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
         
         for (int i = 0; i < batchSize; i++) {
             if (images[i].empty()) {
-                std::cerr << "  Image " << i << " is empty, skipping" << std::endl;
                 // 添加空数据占位
                 std::vector<float> emptyData(3 * inputHeight_ * inputWidth_, 0.0f);
                 batchInputData.insert(batchInputData.end(), emptyData.begin(), emptyData.end());
                 continue;
             }
-            
-            std::cout << "  Preprocessing image " << i << ": " 
-                      << images[i].cols << "x" << images[i].rows << std::endl;
-            
+
             // Resize
             cv::Mat resized;
             cv::resize(images[i], resized, cv::Size(inputWidth_, inputHeight_));
@@ -410,17 +404,11 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
                     
                     // L2归一化
                     normalize(feature);
-                    
-                    std::cout << "  Image " << i << ": feature extracted successfully" << std::endl;
-                } else {
-                    std::cout << "  Image " << i << ": skipped (invalid input)" << std::endl;
                 }
                 
                 features.push_back(feature);
             }
         }
-        
-        std::cout << "Batch processing completed: " << features.size() << " results" << std::endl;
         
     } catch (const Ort::Exception& e) {
         std::cerr << "Error during batch feature extraction: " << e.what() << std::endl;
@@ -442,12 +430,9 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatch(const std::
         return features;
     }
     
-    std::cout << "Batch processing " << images.size() << " images (non-batch fallback)" << std::endl;
-    
     // 注意：由于每张图片可能需要不同的对齐参数，
     // 这里使用逐个处理的方式（未来可以优化为真正的批处理）
     for (size_t i = 0; i < images.size(); i++) {
-        std::cout << "  Processing image " << i << std::endl;
         std::vector<float> feature = extractFeatureSimple(images[i]);
         features.push_back(feature);
     }
@@ -458,7 +443,6 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatch(const std::
 void FaceRecognizer::setupGPU() {
     try {
         std::cout << "Configuring CUDA GPU support..." << std::endl;
-        
 #ifdef USE_CUDA
         OrtCUDAProviderOptions cuda_options;
         cuda_options.device_id = deviceId_;
