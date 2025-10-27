@@ -6,7 +6,7 @@
 // 简单测试加载 .so 库
 int main() {
     std::cout << "Testing libimage_processor.so" << std::endl;
-    std::cout << "==============================" << std::endl;
+    std::cout << "================================" << std::endl;
     
     // 1. 初始化
     const char* modelPath = "models/w600k_mbf.onnx";

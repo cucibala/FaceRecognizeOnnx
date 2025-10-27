@@ -356,80 +356,43 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
             validFlags[i] = true;
         }
         
-        // 创建批量输入tensor（使用 IO Binding 优化，如果在 GPU 上）
+        // 创建批量输入tensor
+        // ONNX Runtime 会自动处理 CPU->GPU 数据传输
         std::vector<int64_t> inputShapeBatch = {static_cast<int64_t>(batchSize), 3, inputHeight_, inputWidth_};
+        auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
+            memoryInfo, batchInputData.data(), batchInputData.size(),
+            inputShapeBatch.data(), inputShapeBatch.size()
+        );
         
-#ifdef USE_CUDA
-        // GPU 模式：使用 CUDA 内存
-        if (useGPU_) {
-            auto cudaMemInfo = Ort::MemoryInfo::CreateCuda(OrtDeviceAllocator, deviceId_);
-            Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
-                cudaMemInfo, batchInputData.data(), batchInputData.size(),
-                inputShapeBatch.data(), inputShapeBatch.size()
-            );
+        // 批量推理
+        auto outputTensors = session_->Run(
+            Ort::RunOptions{nullptr},
+            inputNamePtrs_.data(), &inputTensor, 1,
+            outputNamePtrs_.data(), outputNamePtrs_.size()
+        );
+        
+        // 获取输出
+        float* outputData = outputTensors[0].GetTensorMutableData<float>();
+        auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
+        
+        // 解析每个图片的特征
+        if (outputShape.size() >= 2) {
+            int outputBatchSize = static_cast<int>(outputShape[0]);
+            int featureDim = static_cast<int>(outputShape[1]);
             
-            auto outputTensors = session_->Run(
-                Ort::RunOptions{nullptr},
-                inputNamePtrs_.data(), &inputTensor, 1,
-                outputNamePtrs_.data(), outputNamePtrs_.size()
-            );
-            
-            float* outputData = outputTensors[0].GetTensorMutableData<float>();
-            auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
-            
-            // 解析特征
-            if (outputShape.size() >= 2) {
-                int outputBatchSize = static_cast<int>(outputShape[0]);
-                int featureDim = static_cast<int>(outputShape[1]);
+            for (int i = 0; i < outputBatchSize && i < batchSize; i++) {
+                std::vector<float> feature;
                 
-                for (int i = 0; i < outputBatchSize && i < batchSize; i++) {
-                    std::vector<float> feature;
-                    
-                    if (validFlags[i]) {
-                        int offset = i * featureDim;
-                        feature.assign(outputData + offset, outputData + offset + featureDim);
-                        normalize(feature);
-                    }
-                    features.push_back(feature);
+                if (validFlags[i]) {
+                    int offset = i * featureDim;
+                    feature.assign(outputData + offset, outputData + offset + featureDim);
+                    normalize(feature);
                 }
-            }
-        } else {
-#endif
-            // CPU 模式：使用 CPU 内存
-            auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-            Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
-                memoryInfo, batchInputData.data(), batchInputData.size(),
-                inputShapeBatch.data(), inputShapeBatch.size()
-            );
-            
-            auto outputTensors = session_->Run(
-                Ort::RunOptions{nullptr},
-                inputNamePtrs_.data(), &inputTensor, 1,
-                outputNamePtrs_.data(), outputNamePtrs_.size()
-            );
-            
-            float* outputData = outputTensors[0].GetTensorMutableData<float>();
-            auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
-            
-            // 解析特征
-            if (outputShape.size() >= 2) {
-                int outputBatchSize = static_cast<int>(outputShape[0]);
-                int featureDim = static_cast<int>(outputShape[1]);
                 
-                for (int i = 0; i < outputBatchSize && i < batchSize; i++) {
-                    std::vector<float> feature;
-                    
-                    if (validFlags[i]) {
-                        int offset = i * featureDim;
-                        feature.assign(outputData + offset, outputData + offset + featureDim);
-                        normalize(feature);
-                    }
-                    features.push_back(feature);
-                }
+                features.push_back(feature);
             }
-#ifdef USE_CUDA
         }
-#endif
         
     } catch (const Ort::Exception& e) {
         std::cerr << "Error during batch feature extraction: " << e.what() << std::endl;
