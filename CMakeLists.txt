@@ -4,6 +4,10 @@ project(InsightFaceDemo)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# GPU 支持选项
+option(USE_CUDA "Enable CUDA support for ONNX Runtime" OFF)
+option(USE_TENSORRT "Enable TensorRT support for ONNX Runtime" OFF)
+
 # OpenCV
 set(OpenCV_DIR "/home/xxx/codeSource/history/ai-center/3rdparty/opencv/lib/cmake/opencv4")
 find_package(OpenCV REQUIRED)
@@ -19,6 +23,17 @@ endif()
 
 include_directories(${ONNXRUNTIME_DIR}/include)
 link_directories(${ONNXRUNTIME_DIR}/lib)
+
+# 配置编译选项
+if(USE_CUDA)
+    add_definitions(-DUSE_CUDA)
+    message(STATUS "CUDA support enabled")
+endif()
+
+if(USE_TENSORRT)
+    add_definitions(-DUSE_TENSORRT)
+    message(STATUS "TensorRT support enabled")
+endif()
 
 # Source files
 set(SOURCES
