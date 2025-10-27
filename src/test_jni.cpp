@@ -83,7 +83,6 @@ void testBatchPerformance(const char* modelPath, const std::string& imagePath, i
         ImageBase64 img;
         img.base64_str = base64Strings[i].c_str();
         img.str_len = base64Strings[i].length();
-        img.user_data = nullptr;
         images.push_back(img);
     }
     
@@ -187,7 +186,6 @@ void runBenchmark(const char* modelPath, const std::string& imagePath, bool useG
             ImageBase64 img;
             img.base64_str = base64Strings[i].c_str();
             img.str_len = base64Strings[i].length();
-            img.user_data = nullptr;
             images.push_back(img);
         }
         
