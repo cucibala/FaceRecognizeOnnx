@@ -293,9 +293,9 @@ static void processBatchLocked() {
     if (valid_count < ImageBuffer::MIN_BATCH_SIZE) {
         std::cout << "Buffer has only " << valid_count << " valid images, padding to " 
                   << ImageBuffer::MIN_BATCH_SIZE << " with duplicates" << std::endl;
-        
-        cv::Mat template_img = images_to_process[0].clone();
         while (images_to_process.size() < ImageBuffer::MIN_BATCH_SIZE) {
+            cv::Mat template_img = cv::Mat::zeros(images_to_process[0].rows, images_to_process[0].cols,
+                 images_to_process[0].type());
             images_to_process.push_back(template_img.clone());
         }
     }
@@ -397,15 +397,32 @@ extern "C" int FR_ProcessBatchImages(
         // 加锁操作缓冲区
         std::unique_lock<std::mutex> lock(g_image_buffer.mutex);
         
-        // 将图片添加到缓冲区
+        // 将图片添加到缓冲区，并验证图片属性
+        int valid_decode_count = 0;
         for (int i = 0; i < input->count; i++) {
             if (!input->images[i].base64_str || input->images[i].str_len <= 0) {
                 output->results[i].status = -10;
+                std::cerr << "Image " << i << ": Invalid Base64 input" << std::endl;
             } else if (images[i].empty()) {
                 output->results[i].status = -11;
+                std::cerr << "Image " << i << ": Decode failed (empty)" << std::endl;
+            } else if (images[i].cols <= 0 || images[i].rows <= 0) {
+                output->results[i].status = -11;
+                std::cerr << "Image " << i << ": Invalid dimensions " 
+                          << images[i].cols << "x" << images[i].rows << std::endl;
+            } else if (images[i].type() != CV_8UC3 && images[i].type() != CV_8UC1) {
+                output->results[i].status = -11;
+                std::cerr << "Image " << i << ": Unsupported type " << images[i].type() 
+                          << " (expected CV_8UC3=" << CV_8UC3 << " or CV_8UC1=" << CV_8UC1 << ")" << std::endl;
             } else {
                 my_batch_id = g_image_buffer.add_to_batch(images[i], &output->results[i]);
+                valid_decode_count++;
             }
+        }
+        
+        if (valid_decode_count < input->count) {
+            std::cerr << "Decode validation: " << valid_decode_count << "/" << input->count 
+                      << " images passed validation" << std::endl;
         }
         
         std::cout << "Buffer: " << g_image_buffer.size() << "/" << ImageBuffer::MIN_BATCH_SIZE 
