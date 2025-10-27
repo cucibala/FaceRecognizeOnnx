@@ -503,8 +503,8 @@ void FaceRecognizer::setupGPU() {
             
             OrtTensorRTProviderOptions trt_options{};
             trt_options.device_id = deviceId_;
-            trt_options.trt_engine_cache_enable = 1;
-            trt_options.trt_engine_cache_path = "./trt_cache";
+            // trt_options.trt_engine_cache_enable = 1;
+            // trt_options.trt_engine_cache_path = "./trt_cache";
             
             // TensorRT 详细配置
             // trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024; // 2GB
