@@ -156,6 +156,7 @@ extern "C" int FR_ProcessBatchImages(
         // 分配结果数组
         output->count = input->count;
         output->results = new ImageResult[input->count];
+        auto t1 = std::chrono::high_resolution_clock::now();
         
         // 解码所有图片
         std::vector<cv::Mat> images;
@@ -192,8 +193,11 @@ extern "C" int FR_ProcessBatchImages(
             validIndices.push_back(i);
         }
         
+        auto t2 = std::chrono::high_resolution_clock::now();
         // 批量提取特征
-        std::cout << "Running batch feature extraction..." << std::endl;
+        std::cout << "Running batch feature extraction..." << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << " ms" << std::endl;
+
+
         auto allFeatures = g_recognizer->extractFeaturesBatchSimple(images);
         
         // 将结果复制到输出
