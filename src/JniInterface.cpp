@@ -187,8 +187,12 @@ extern "C" int FR_ProcessBatchImages(
             validIndices.push_back(i);
         }
         
+        auto extractStart = std::chrono::high_resolution_clock::now();
         // 批量提取特征
         auto allFeatures = g_recognizer->extractFeaturesBatchSimple(images);
+        auto extractEnd = std::chrono::high_resolution_clock::now();
+        auto extractDuration = std::chrono::duration_cast<std::chrono::milliseconds>(extractEnd - extractStart);
+        std::cout << "Extract time: " << extractDuration.count() << " ms" << std::endl;
 
         // 将结果复制到输出
         for (size_t i = 0; i < allFeatures.size() && i < static_cast<size_t>(input->count); i++) {
