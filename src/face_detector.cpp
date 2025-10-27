@@ -363,7 +363,7 @@ float FaceDetector::iou(const cv::Rect& box1, const cv::Rect& box2) {
 
 void FaceDetector::setupGPU() {
     try {
-        std::cout << "Configuring GPU support for detector..." << std::endl;
+        std::cout << "Configuring CUDA GPU support for detector..." << std::endl;
         
 #ifdef USE_CUDA
         OrtCUDAProviderOptions cuda_options;
@@ -374,26 +374,19 @@ void FaceDetector::setupGPU() {
         cuda_options.do_copy_in_default_stream = 1;
         
         sessionOptions_.AppendExecutionProvider_CUDA(cuda_options);
-        std::cout << "CUDA provider enabled for detector (device: " << deviceId_ << ")" << std::endl;
-#endif
-
-#ifdef USE_TENSORRT
-        OrtTensorRTProviderOptions trt_options;
-        trt_options.device_id = deviceId_;
-        trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024; // 2GB
-        trt_options.trt_fp16_enable = 1;
-        
-        sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
-        std::cout << "TensorRT provider enabled for detector (device: " << deviceId_ << ")" << std::endl;
-#endif
-
-#if !defined(USE_CUDA) && !defined(USE_TENSORRT)
-        std::cerr << "Warning: GPU requested but not compiled with CUDA/TensorRT support!" << std::endl;
+        std::cout << "✓ CUDA provider enabled for detector (GPU device: " << deviceId_ << ")" << std::endl;
+#else
+        std::cerr << "Warning: GPU requested but not compiled with CUDA support!" << std::endl;
+        std::cerr << "Please recompile with: cmake -DUSE_CUDA=ON .." << std::endl;
         std::cerr << "Falling back to CPU execution" << std::endl;
 #endif
         
     } catch (const Ort::Exception& e) {
-        std::cerr << "Error setting up GPU: " << e.what() << std::endl;
+        std::cerr << "Error setting up CUDA: " << e.what() << std::endl;
+        std::cerr << "Possible reasons:" << std::endl;
+        std::cerr << "  - CUDA not installed or not in PATH" << std::endl;
+        std::cerr << "  - Using CPU version of ONNX Runtime instead of GPU version" << std::endl;
+        std::cerr << "  - Incompatible CUDA version" << std::endl;
         std::cerr << "Falling back to CPU execution" << std::endl;
     }
 }

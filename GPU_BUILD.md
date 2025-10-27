@@ -1,22 +1,19 @@
-# GPU 加速构建指南
+# GPU 加速构建指南 (CUDA)
 
-本项目支持使用 CUDA 和 TensorRT 进行 GPU 加速。
+本项目支持使用 CUDA 进行 GPU 加速。
 
 ## 前提条件
 
 ### 1. CUDA Toolkit
-- CUDA 11.x 或 12.x
+- **CUDA 11.x** 或 **12.x**
 - 从 [NVIDIA CUDA官网](https://developer.nvidia.com/cuda-downloads) 下载安装
 
-### 2. cuDNN（可选，但推荐）
-- cuDNN 8.x
+### 2. cuDNN（推荐）
+- **cuDNN 8.x**
 - 从 [NVIDIA cuDNN官网](https://developer.nvidia.com/cudnn) 下载安装
+- 可以显著提升卷积层性能
 
-### 3. TensorRT（可选）
-- TensorRT 8.x
-- 从 [NVIDIA TensorRT官网](https://developer.nvidia.com/tensorrt) 下载安装
-
-### 4. ONNX Runtime GPU 版本
+### 3. ONNX Runtime GPU 版本
 下载对应的 ONNX Runtime GPU 版本：
 
 ```bash
@@ -34,13 +31,12 @@ tar -xzf onnxruntime-linux-x64-gpu-cuda12-1.16.3.tgz
 
 ## 编译选项
 
-项目支持三种编译模式：
+项目支持两种编译模式：
 
 | 模式 | 说明 | 性能 | 适用场景 |
 |------|------|------|----------|
 | **CPU** | 仅使用 CPU | 基准 | 无 GPU 环境 |
-| **CUDA** | 使用 CUDA 加速 | 2-5x | 有 NVIDIA GPU |
-| **TensorRT** | 使用 TensorRT 加速 | 3-10x | 生产部署，最高性能 |
+| **CUDA** | 使用 CUDA 加速 | 3-8x | 有 NVIDIA GPU |
 
 ## 编译步骤
 
@@ -52,34 +48,13 @@ cmake .. -DONNXRUNTIME_DIR=/path/to/onnxruntime
 make -j$(nproc)
 ```
 
-### 方式 2: 启用 CUDA
+### 方式 2: 启用 CUDA GPU 加速
 
 ```bash
 mkdir build && cd build
 cmake .. \
     -DONNXRUNTIME_DIR=/path/to/onnxruntime-gpu \
     -DUSE_CUDA=ON
-make -j$(nproc)
-```
-
-### 方式 3: 启用 TensorRT
-
-```bash
-mkdir build && cd build
-cmake .. \
-    -DONNXRUNTIME_DIR=/path/to/onnxruntime-gpu \
-    -DUSE_TENSORRT=ON
-make -j$(nproc)
-```
-
-### 方式 4: 同时启用 CUDA 和 TensorRT
-
-```bash
-mkdir build && cd build
-cmake .. \
-    -DONNXRUNTIME_DIR=/path/to/onnxruntime-gpu \
-    -DUSE_CUDA=ON \
-    -DUSE_TENSORRT=ON
 make -j$(nproc)
 ```
 
@@ -127,9 +102,9 @@ cmake --build . --config Release
 | 设备 | 单张 (ms) | 批次16 (ms) | 批次32 (ms) | 吞吐量 (img/s) |
 |------|----------|------------|------------|---------------|
 | CPU (8核) | 50 | 800 | 1600 | 20 |
+| GTX 1660 Ti (CUDA) | 20 | 160 | 280 | 114 |
 | RTX 3060 (CUDA) | 15 | 120 | 200 | 160 |
 | RTX 3090 (CUDA) | 10 | 80 | 140 | 230 |
-| RTX 3090 (TensorRT) | 5 | 40 | 70 | 457 |
 
 ## 验证 GPU 是否工作
 
@@ -196,11 +171,7 @@ export LD_LIBRARY_PATH=/path/to/onnxruntime-gpu/lib:$LD_LIBRARY_PATH
 - 检查程序输出确认 GPU 已启用
 - 使用 `nvidia-smi` 确认 GPU 正在被使用
 
-### Q4: TensorRT 首次运行很慢
-
-**A**: TensorRT 首次运行时会构建优化引擎，这个过程可能需要几分钟。之后会缓存引擎文件，后续运行会很快。
-
-### Q5: 多 GPU 环境下如何选择设备
+### Q4: 多 GPU 环境下如何选择设备
 
 **A**: 使用 `--device` 参数或设置环境变量：
 
@@ -223,13 +194,7 @@ export CUDA_VISIBLE_DEVICES=1
 | RTX 3060 (12GB) | 32-64 | ~3GB |
 | RTX 3090 (24GB) | 64-128 | ~6GB |
 
-### 2. 精度选择
-
-TensorRT 支持 FP16 精度（默认启用）：
-- FP32: 最高精度，较慢
-- FP16: 略微精度损失（<1%），速度提升 2x
-
-### 3. 内存管理
+### 2. 内存管理
 
 如果遇到 OOM（Out of Memory）：
 
