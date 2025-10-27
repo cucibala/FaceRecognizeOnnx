@@ -4,7 +4,7 @@
 
 ## 功能特性
 
-- ✅ **人脸检测**: 使用 SCRFD 检测模型 (det_10g.onnx)
+- ✅ **人脸检测**: 使用 SCRFD 检测模型 (det_500m.onnx)
 - ✅ **关键点检测**: 检测5个人脸关键点（双眼、鼻子、嘴角）
 - ✅ **特征提取**: 使用 ArcFace 模型提取512维人脸特征 (w600k_r50.onnx)
 - ✅ **人脸比对**: 基于余弦相似度的人脸比对
@@ -73,7 +73,7 @@ tar -xzf onnxruntime-osx-arm64-1.16.3.tgz
 
 本项目使用 InsightFace 的 buffalo_sc 模型，需要以下两个模型文件：
 
-1. **det_10g.onnx** - SCRFD 人脸检测模型
+1. **det_500m.onnx** - SCRFD 人脸检测模型
 2. **w600k_r50.onnx** - ArcFace 人脸识别模型
 
 ### 模型文件结构
@@ -81,7 +81,7 @@ tar -xzf onnxruntime-osx-arm64-1.16.3.tgz
 ```
 onnxFRTest/
 ├── models/
-│   ├── det_10g.onnx
+│   ├── det_500m.onnx
 │   └── w600k_r50.onnx
 ├── src/
 │   ├── main.cpp

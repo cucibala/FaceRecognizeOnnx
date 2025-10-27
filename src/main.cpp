@@ -42,8 +42,11 @@ void testDetection(FaceDetector& detector, const std::string& imagePath) {
     cv::Mat image = cv::imread(imagePath);
     if (image.empty()) {
         std::cerr << "无法读取图像: " << imagePath << std::endl;
+        std::cerr << "请检查文件路径是否正确，文件是否存在" << std::endl;
         return;
     }
+    
+    std::cout << "图像尺寸: " << image.cols << "x" << image.rows << std::endl;
     
     auto faces = detector.detect(image);
     std::cout << "检测到 " << faces.size() << " 个人脸" << std::endl;
@@ -68,10 +71,18 @@ void testRecognition(FaceDetector& detector, FaceRecognizer& recognizer,
     cv::Mat image1 = cv::imread(image1Path);
     cv::Mat image2 = cv::imread(image2Path);
     
-    if (image1.empty() || image2.empty()) {
-        std::cerr << "无法读取图像" << std::endl;
+    if (image1.empty()) {
+        std::cerr << "无法读取图像1: " << image1Path << std::endl;
         return;
     }
+    
+    if (image2.empty()) {
+        std::cerr << "无法读取图像2: " << image2Path << std::endl;
+        return;
+    }
+    
+    std::cout << "图像1尺寸: " << image1.cols << "x" << image1.rows << std::endl;
+    std::cout << "图像2尺寸: " << image2.cols << "x" << image2.rows << std::endl;
     
     // 检测人脸
     auto faces1 = detector.detect(image1);
@@ -119,6 +130,71 @@ void testRecognition(FaceDetector& detector, FaceRecognizer& recognizer,
     cv::hconcat(image1, image2, combined);
     
     cv::imshow("人脸比对结果", combined);
+    cv::waitKey(0);
+}
+
+void testRecognitionSimple(FaceRecognizer& recognizer, 
+                           const std::string& image1Path, const std::string& image2Path) {
+    std::cout << "\n=== 测试人脸识别与比对（简化模式 - 无检测） ===" << std::endl;
+    
+    cv::Mat image1 = cv::imread(image1Path);
+    cv::Mat image2 = cv::imread(image2Path);
+    
+    if (image1.empty()) {
+        std::cerr << "无法读取图像1: " << image1Path << std::endl;
+        return;
+    }
+    
+    if (image2.empty()) {
+        std::cerr << "无法读取图像2: " << image2Path << std::endl;
+        return;
+    }
+    
+    std::cout << "\n处理图像1..." << std::endl;
+    std::cout << "原始尺寸: " << image1.cols << "x" << image1.rows << std::endl;
+    auto feature1 = recognizer.extractFeatureSimple(image1);
+    
+    std::cout << "\n处理图像2..." << std::endl;
+    std::cout << "原始尺寸: " << image2.cols << "x" << image2.rows << std::endl;
+    auto feature2 = recognizer.extractFeatureSimple(image2);
+    
+    if (feature1.empty() || feature2.empty()) {
+        std::cerr << "\n特征提取失败" << std::endl;
+        return;
+    }
+    
+    std::cout << "\n特征维度: " << feature1.size() << std::endl;
+    
+    // 比对人脸
+    float similarity = recognizer.compareFaces(feature1, feature2);
+    std::cout << "\n相似度: " << similarity << std::endl;
+    
+    // 判断是否为同一人
+    float threshold = 0.6f;
+    if (similarity > threshold) {
+        std::cout << "结果: 同一人 (相似度: " << similarity << " > " << threshold << ")" << std::endl;
+    } else {
+        std::cout << "结果: 不同人 (相似度: " << similarity << " <= " << threshold << ")" << std::endl;
+    }
+    
+    // 显示结果
+    cv::Mat resized1, resized2;
+    cv::resize(image1, resized1, cv::Size(300, 300));
+    cv::resize(image2, resized2, cv::Size(300, 300));
+    
+    // 添加文本
+    std::string text = "Similarity: " + std::to_string(similarity).substr(0, 5);
+    cv::putText(resized1, "Image 1", cv::Point(10, 30), 
+                cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
+    cv::putText(resized2, "Image 2", cv::Point(10, 30), 
+                cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
+    cv::putText(resized2, text, cv::Point(10, 280), 
+                cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
+    
+    cv::Mat combined;
+    cv::hconcat(resized1, resized2, combined);
+    
+    cv::imshow("人脸比对结果（简化模式）", combined);
     cv::waitKey(0);
 }
 
@@ -190,7 +266,7 @@ int main(int argc, char** argv) {
     std::cout << "========================================" << std::endl;
     
     // 模型路径
-    std::string detectorModelPath = "models/det_10g.onnx";
+    std::string detectorModelPath = "models/det_500m.onnx";
     std::string recognizerModelPath = "models/w600k_r50.onnx";
     
     // 加载检测模型
@@ -214,10 +290,12 @@ int main(int argc, char** argv) {
         std::cout << "\n使用方法:" << std::endl;
         std::cout << "1. 人脸检测: " << argv[0] << " detect <image_path>" << std::endl;
         std::cout << "2. 人脸比对: " << argv[0] << " compare <image1_path> <image2_path>" << std::endl;
-        std::cout << "3. 实时检测: " << argv[0] << " webcam" << std::endl;
+        std::cout << "3. 简化比对: " << argv[0] << " simple <image1_path> <image2_path>" << std::endl;
+        std::cout << "4. 实时检测: " << argv[0] << " webcam" << std::endl;
         std::cout << "\n示例:" << std::endl;
         std::cout << "  " << argv[0] << " detect test.jpg" << std::endl;
         std::cout << "  " << argv[0] << " compare person1.jpg person2.jpg" << std::endl;
+        std::cout << "  " << argv[0] << " simple person1.jpg person2.jpg  # 直接resize，不检测人脸" << std::endl;
         std::cout << "  " << argv[0] << " webcam" << std::endl;
         return 0;
     }
@@ -228,6 +306,8 @@ int main(int argc, char** argv) {
         testDetection(detector, argv[2]);
     } else if (mode == "compare" && argc >= 4) {
         testRecognition(detector, recognizer, argv[2], argv[3]);
+    } else if (mode == "simple" && argc >= 4) {
+        testRecognitionSimple(recognizer, argv[2], argv[3]);
     } else if (mode == "webcam") {
         testWebcam(detector, recognizer);
     } else {

@@ -32,8 +32,10 @@ private:
     Ort::SessionOptions sessionOptions_;
     Ort::AllocatorWithDefaultOptions allocator_;
     
-    std::vector<const char*> inputNames_;
-    std::vector<const char*> outputNames_;
+    std::vector<std::string> inputNames_;
+    std::vector<std::string> outputNames_;
+    std::vector<const char*> inputNamePtrs_;
+    std::vector<const char*> outputNamePtrs_;
     std::vector<int64_t> inputShape_;
     
     int inputWidth_;

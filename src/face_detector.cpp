@@ -30,15 +30,30 @@ bool FaceDetector::loadModel(const std::string& modelPath) {
         size_t numInputNodes = session_->GetInputCount();
         if (numInputNodes > 0) {
             Ort::AllocatedStringPtr inputNameAllocated = session_->GetInputNameAllocated(0, allocator_);
-            inputNames_.push_back(inputNameAllocated.get());
+            inputNames_.push_back(std::string(inputNameAllocated.get()));
             
             Ort::TypeInfo inputTypeInfo = session_->GetInputTypeInfo(0);
             auto tensorInfo = inputTypeInfo.GetTensorTypeAndShapeInfo();
             inputShape_ = tensorInfo.GetShape();
             
             if (inputShape_.size() == 4) {
-                inputHeight_ = static_cast<int>(inputShape_[2]);
-                inputWidth_ = static_cast<int>(inputShape_[3]);
+                // 检查是否为动态维度（-1），如果是则保持默认值
+                int64_t modelHeight = inputShape_[2];
+                int64_t modelWidth = inputShape_[3];
+                
+                if (modelHeight > 0) {
+                    inputHeight_ = static_cast<int>(modelHeight);
+                }
+                if (modelWidth > 0) {
+                    inputWidth_ = static_cast<int>(modelWidth);
+                }
+                
+                std::cout << "Model input shape: [" << inputShape_[0] << ", " << inputShape_[1] 
+                          << ", " << inputShape_[2] << ", " << inputShape_[3] << "]" << std::endl;
+                if (modelHeight <= 0 || modelWidth <= 0) {
+                    std::cout << "Note: Dynamic dimensions detected (-1), using default size: " 
+                              << inputWidth_ << "x" << inputHeight_ << std::endl;
+                }
             }
         }
         
@@ -46,12 +61,26 @@ bool FaceDetector::loadModel(const std::string& modelPath) {
         size_t numOutputNodes = session_->GetOutputCount();
         for (size_t i = 0; i < numOutputNodes; i++) {
             Ort::AllocatedStringPtr outputNameAllocated = session_->GetOutputNameAllocated(i, allocator_);
-            outputNames_.push_back(outputNameAllocated.get());
+            outputNames_.push_back(std::string(outputNameAllocated.get()));
+        }
+        
+        // 创建指针数组
+        inputNamePtrs_.clear();
+        for (const auto& name : inputNames_) {
+            inputNamePtrs_.push_back(name.c_str());
+        }
+        
+        outputNamePtrs_.clear();
+        for (const auto& name : outputNames_) {
+            outputNamePtrs_.push_back(name.c_str());
         }
         
         std::cout << "Face detector model loaded successfully!" << std::endl;
-        std::cout << "Input shape: [" << inputShape_[0] << ", " << inputShape_[1] 
-                  << ", " << inputShape_[2] << ", " << inputShape_[3] << "]" << std::endl;
+        std::cout << "Using input size: " << inputWidth_ << "x" << inputHeight_ << std::endl;
+        std::cout << "Number of outputs: " << outputNames_.size() << std::endl;
+        for (size_t i = 0; i < outputNames_.size(); i++) {
+            std::cout << "  Output " << i << ": " << outputNames_[i] << std::endl;
+        }
         
         return true;
     } catch (const Ort::Exception& e) {
@@ -61,6 +90,13 @@ bool FaceDetector::loadModel(const std::string& modelPath) {
 }
 
 void FaceDetector::preprocess(const cv::Mat& image, std::vector<float>& inputData, float& scale) {
+    // 验证输入图像
+    if (image.empty() || image.cols <= 0 || image.rows <= 0) {
+        std::cerr << "Invalid input image for preprocessing" << std::endl;
+        scale = 1.0f;
+        return;
+    }
+    
     // 计算缩放比例
     float scaleW = static_cast<float>(inputWidth_) / image.cols;
     float scaleH = static_cast<float>(inputHeight_) / image.rows;
@@ -68,6 +104,13 @@ void FaceDetector::preprocess(const cv::Mat& image, std::vector<float>& inputDat
     
     int newWidth = static_cast<int>(image.cols * scale);
     int newHeight = static_cast<int>(image.rows * scale);
+    
+    // 确保新尺寸有效
+    if (newWidth <= 0 || newHeight <= 0) {
+        std::cerr << "Invalid resize dimensions: " << newWidth << "x" << newHeight << std::endl;
+        scale = 1.0f;
+        return;
+    }
     
     // 调整图像大小
     cv::Mat resized;
@@ -101,10 +144,27 @@ std::vector<FaceBox> FaceDetector::detect(const cv::Mat& image, float scoreThres
         return faces;
     }
     
+    // 验证输入图像
+    if (image.empty()) {
+        std::cerr << "Input image is empty!" << std::endl;
+        return faces;
+    }
+    
+    if (image.cols <= 0 || image.rows <= 0) {
+        std::cerr << "Invalid image dimensions: " << image.cols << "x" << image.rows << std::endl;
+        return faces;
+    }
+    
     // 预处理
     std::vector<float> inputData;
     float scale;
     preprocess(image, inputData, scale);
+    
+    // 检查预处理结果
+    if (inputData.empty()) {
+        std::cerr << "Preprocessing failed!" << std::endl;
+        return faces;
+    }
     
     // 创建输入tensor
     std::vector<int64_t> inputShapeBatch = {1, 3, inputHeight_, inputWidth_};
@@ -118,11 +178,31 @@ std::vector<FaceBox> FaceDetector::detect(const cv::Mat& image, float scoreThres
     try {
         auto outputTensors = session_->Run(
             Ort::RunOptions{nullptr},
-            inputNames_.data(), &inputTensor, 1,
-            outputNames_.data(), outputNames_.size()
+            inputNamePtrs_.data(), &inputTensor, 1,
+            outputNamePtrs_.data(), outputNamePtrs_.size()
         );
         
         // 处理输出
+        if (outputTensors.size() == 0) {
+            std::cerr << "No output tensors received!" << std::endl;
+            return faces;
+        }
+        
+        std::cout << "Number of output tensors: " << outputTensors.size() << std::endl;
+        
+        // 打印所有输出的形状
+        for (size_t i = 0; i < outputTensors.size(); i++) {
+            auto shape = outputTensors[i].GetTensorTypeAndShapeInfo().GetShape();
+            std::cout << "Output " << i << " shape: [";
+            for (size_t j = 0; j < shape.size(); j++) {
+                std::cout << shape[j];
+                if (j < shape.size() - 1) std::cout << ", ";
+            }
+            std::cout << "]" << std::endl;
+        }
+        
+        // SCRFD 有多个输出 (scores, bboxes, kps)，需要分别处理
+        // 这里使用简化的处理：假设第一个输出包含所有信息
         float* outputData = outputTensors[0].GetTensorMutableData<float>();
         auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
         
@@ -146,12 +226,28 @@ std::vector<FaceBox> FaceDetector::postprocess(const std::vector<float>& outputs
                                                 float scale, float scoreThreshold, float nmsThreshold) {
     std::vector<FaceBox> boxes;
     
-    // SCRFD输出格式: [batch, num_anchors, 15] (x1, y1, x2, y2, score, 10 landmarks)
-    if (outputShape.size() >= 2) {
+    std::cout << "Postprocessing with shape size: " << outputShape.size() << std::endl;
+    if (outputShape.size() > 0) {
+        std::cout << "Shape dimensions: ";
+        for (auto dim : outputShape) {
+            std::cout << dim << " ";
+        }
+        std::cout << std::endl;
+    }
+    
+    // SCRFD输出格式可能是:
+    // 1. [batch, num_anchors, 15] (x1, y1, x2, y2, score, 10 landmarks)
+    // 2. [batch, num_anchors, num_classes] 等多种格式
+    
+    if (outputShape.size() == 3 && outputShape[2] >= 15) {
+        // 格式: [batch, num_anchors, 15+]
         int numAnchors = static_cast<int>(outputShape[1]);
+        int featDim = static_cast<int>(outputShape[2]);
+        
+        std::cout << "Processing " << numAnchors << " anchors with " << featDim << " features" << std::endl;
         
         for (int i = 0; i < numAnchors; i++) {
-            int offset = i * 15;
+            int offset = i * featDim;
             float score = outputs[offset + 4];
             
             if (score > scoreThreshold) {
@@ -170,18 +266,73 @@ std::vector<FaceBox> FaceDetector::postprocess(const std::vector<float>& outputs
                 face.score = score;
                 
                 // 提取关键点
-                for (int j = 0; j < 5; j++) {
-                    face.landmarks[j].x = outputs[offset + 5 + j * 2] / scale;
-                    face.landmarks[j].y = outputs[offset + 5 + j * 2 + 1] / scale;
+                if (featDim >= 15) {
+                    for (int j = 0; j < 5; j++) {
+                        face.landmarks[j].x = outputs[offset + 5 + j * 2] / scale;
+                        face.landmarks[j].y = outputs[offset + 5 + j * 2 + 1] / scale;
+                    }
                 }
                 
                 boxes.push_back(face);
             }
         }
+    } else if (outputShape.size() == 2) {
+        // 格式: [num_detections, 15+]
+        int numDetections = static_cast<int>(outputShape[0]);
+        int featDim = static_cast<int>(outputShape[1]);
+        
+        std::cout << "Processing " << numDetections << " detections with " << featDim << " features" << std::endl;
+        
+        for (int i = 0; i < numDetections; i++) {
+            int offset = i * featDim;
+            
+            // 根据特征维度判断格式
+            float score;
+            float x1, y1, x2, y2;
+            
+            if (featDim >= 15) {
+                // 假设格式: x1, y1, x2, y2, score, kps...
+                x1 = outputs[offset + 0] / scale;
+                y1 = outputs[offset + 1] / scale;
+                x2 = outputs[offset + 2] / scale;
+                y2 = outputs[offset + 3] / scale;
+                score = outputs[offset + 4];
+            } else {
+                // 简化格式
+                continue;
+            }
+            
+            if (score > scoreThreshold) {
+                FaceBox face;
+                face.box = cv::Rect(
+                    static_cast<int>(x1),
+                    static_cast<int>(y1),
+                    static_cast<int>(x2 - x1),
+                    static_cast<int>(y2 - y1)
+                );
+                face.score = score;
+                
+                // 提取关键点
+                if (featDim >= 15) {
+                    for (int j = 0; j < 5; j++) {
+                        face.landmarks[j].x = outputs[offset + 5 + j * 2] / scale;
+                        face.landmarks[j].y = outputs[offset + 5 + j * 2 + 1] / scale;
+                    }
+                }
+                
+                boxes.push_back(face);
+            }
+        }
+    } else {
+        std::cout << "Warning: Unexpected output shape format" << std::endl;
     }
+    
+    std::cout << "Found " << boxes.size() << " faces before NMS" << std::endl;
     
     // NMS
     nms(boxes, nmsThreshold);
+    
+    std::cout << "Found " << boxes.size() << " faces after NMS" << std::endl;
     
     return boxes;
 }
