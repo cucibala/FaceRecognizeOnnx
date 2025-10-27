@@ -7,11 +7,52 @@
 #include <cstring>
 #include <memory>
 #include <chrono>
+#include <mutex>
+#include <condition_variable>
 
 // 全局变量：单例模式的识别器
 static std::unique_ptr<FaceRecognizer> g_recognizer = nullptr;
 static std::string g_modelPath = "";
 static bool g_initialized = false;
+
+// 批处理缓冲区（1024 张图片）+ 同步机制
+struct ImageBuffer {
+    std::vector<cv::Mat> images;
+    std::vector<ImageResult*> result_ptrs;
+    std::vector<int> batch_ids;  // 每个图片所属的批次 ID
+    int current_batch_id = 0;
+    int processed_batch_id = -1;
+    
+    std::mutex mutex;
+    std::condition_variable cv;
+    
+    void clear() {
+        images.clear();
+        result_ptrs.clear();
+        batch_ids.clear();
+    }
+    
+    bool is_full() const {
+        return images.size() >= 64;
+    }
+    
+    int size() const {
+        return images.size();
+    }
+    
+    int add_to_batch(const cv::Mat& img, ImageResult* result_ptr) {
+        images.push_back(img);
+        result_ptrs.push_back(result_ptr);
+        batch_ids.push_back(current_batch_id);
+        return current_batch_id;  // 返回该图片的批次 ID
+    }
+    
+    void start_new_batch() {
+        current_batch_id++;
+    }
+};
+
+static ImageBuffer g_image_buffer;
 
 // Base64 解码函数
 static const std::string base64_chars = 
@@ -186,6 +227,49 @@ extern "C" int FR_InitializeWithGPU(const char* model_path, bool use_gpu, int de
 }
 
 // 核心处理接口：批量处理 Base64 图片
+// 内部函数：执行批量推理（需要在持有锁的情况下调用）
+static void processBatchLocked() {
+    if (g_image_buffer.images.empty()) return;
+    
+    int batch_size = g_image_buffer.size();
+    std::cout << "\n=== Processing batch of " << batch_size << " images ===" << std::endl;
+    
+    auto extractStart = std::chrono::high_resolution_clock::now();
+    auto allFeatures = g_recognizer->extractFeaturesBatchSimple(g_image_buffer.images);
+    auto extractEnd = std::chrono::high_resolution_clock::now();
+    auto extractDuration = std::chrono::duration_cast<std::chrono::milliseconds>(extractEnd - extractStart);
+    
+    std::cout << "Batch inference completed: " << batch_size << " images in " 
+              << extractDuration.count() << " ms" << std::endl;
+    std::cout << "Throughput: " << (batch_size * 1000.0 / extractDuration.count()) << " img/s" << std::endl;
+    
+    // 将结果复制到输出
+    for (size_t i = 0; i < allFeatures.size() && i < g_image_buffer.result_ptrs.size(); i++) {
+        ImageResult* result = g_image_buffer.result_ptrs[i];
+        
+        if (!allFeatures[i].empty()) {
+            result->feature_dim = allFeatures[i].size();
+            result->features = new float[result->feature_dim];
+            std::memcpy(result->features, allFeatures[i].data(), result->feature_dim * sizeof(float));
+            result->status = 0;
+        } else {
+            result->status = -12;
+        }
+    }
+    
+    // 更新已处理的批次 ID
+    g_image_buffer.processed_batch_id = g_image_buffer.current_batch_id;
+    
+    // 清空缓冲区
+    g_image_buffer.clear();
+    
+    // 开始新批次
+    g_image_buffer.start_new_batch();
+    
+    std::cout << "=== Batch processing completed ===" << std::endl << std::endl;
+}
+
+// 核心处理接口：批量处理 Base64 图片（累积到 1024 张后推理，同步等待）
 extern "C" int FR_ProcessBatchImages(
     const BatchImageInput* input,
     BatchImageOutput* output
@@ -200,14 +284,12 @@ extern "C" int FR_ProcessBatchImages(
         return -2;
     }
     
-    // 确保识别器已初始化
     if (!g_initialized || !g_recognizer) {
-        std::cerr << "Recognizer not initialized. Call FR_Initialize first." << std::endl;
+        std::cerr << "Recognizer not initialized" << std::endl;
         return -3;
     }
     
     try {
-        auto decodeStart = std::chrono::high_resolution_clock::now();
         // 分配结果数组
         output->count = input->count;
         output->results = new ImageResult[input->count];
@@ -219,45 +301,56 @@ extern "C" int FR_ProcessBatchImages(
             output->results[i].status = -1;
         }
         
-        // 并行解码所有图片（使用优化的批量解码）
+        // 并行解码所有图片
+        auto decodeStart = std::chrono::high_resolution_clock::now();
         std::vector<cv::Mat> images = base64ToMatBatch(input->images, input->count);
+        auto decodeEnd = std::chrono::high_resolution_clock::now();
+        auto decodeDuration = std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart);
+        std::cout << "Decode: " << input->count << " images in " << decodeDuration.count() << " ms" << std::endl;
         
-        // 标记有效的图片
-        std::vector<int> validIndices;
-        for (int i = 0; i < input->count; i++) {
-            if (!input->images[i].base64_str || input->images[i].str_len <= 0) {
-                output->results[i].status = -10;
-            } else if (images[i].empty()) {
-                output->results[i].status = -11;
-            } else {
-                validIndices.push_back(i);
+        int my_batch_id = -1;
+        bool should_process = false;
+        
+        // 加锁操作缓冲区
+        {
+            std::unique_lock<std::mutex> lock(g_image_buffer.mutex);
+            
+            // 将图片添加到缓冲区
+            for (int i = 0; i < input->count; i++) {
+                if (!input->images[i].base64_str || input->images[i].str_len <= 0) {
+                    output->results[i].status = -10;
+                } else if (images[i].empty()) {
+                    output->results[i].status = -11;
+                } else {
+                    my_batch_id = g_image_buffer.add_to_batch(images[i], &output->results[i]);
+                }
+            }
+            
+            std::cout << "Buffer: " << g_image_buffer.size() << "/1024 images (batch_id=" << my_batch_id << ")" << std::endl;
+            
+            // 检查是否需要处理
+            if (g_image_buffer.is_full()) {
+                should_process = true;
             }
         }
         
-        auto decodeEnd = std::chrono::high_resolution_clock::now();
-        auto decodeDuration = std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart);
-        std::cout << "Parallel decode time: " << decodeDuration.count() << " ms (" << input->count << " images)" << std::endl;
-
-        auto extractStart = std::chrono::high_resolution_clock::now();
-        // 批量提取特征
-        auto allFeatures = g_recognizer->extractFeaturesBatchSimple(images);
-        auto extractEnd = std::chrono::high_resolution_clock::now();
-        auto extractDuration = std::chrono::duration_cast<std::chrono::milliseconds>(extractEnd - extractStart);
-        std::cout << "Extract time: " << extractDuration.count() << " ms" << std::endl;
-
-        // 将结果复制到输出
-        for (size_t i = 0; i < allFeatures.size() && i < static_cast<size_t>(input->count); i++) {
-            ImageResult& result = output->results[i];
+        // 如果缓冲区满了，执行推理
+        if (should_process) {
+            std::unique_lock<std::mutex> lock(g_image_buffer.mutex);
+            std::cout << "Buffer full! Processing batch..." << std::endl;
+            processBatchLocked();
             
-            if (!allFeatures[i].empty()) {
-                // 分配内存并复制特征
-                result.feature_dim = allFeatures[i].size();
-                result.features = new float[result.feature_dim];
-                std::memcpy(result.features, allFeatures[i].data(), result.feature_dim * sizeof(float));
-                result.status = 0; // 成功
-            } else {
-                result.status = -12; // 特征提取失败
-            }
+            // 通知所有等待的线程
+            g_image_buffer.cv.notify_all();
+        }
+        
+        // 等待直到当前批次被处理
+        if (my_batch_id >= 0) {
+            std::unique_lock<std::mutex> lock(g_image_buffer.mutex);
+            g_image_buffer.cv.wait(lock, [my_batch_id]() {
+                return g_image_buffer.processed_batch_id >= my_batch_id;
+            });
+            std::cout << "Batch " << my_batch_id << " processed, returning results" << std::endl;
         }
         
         return 0;
@@ -265,7 +358,6 @@ extern "C" int FR_ProcessBatchImages(
     } catch (const std::exception& e) {
         std::cerr << "Batch processing error: " << e.what() << std::endl;
         
-        // 清理已分配的内存
         if (output->results) {
             for (int i = 0; i < output->count; i++) {
                 if (output->results[i].features) {
@@ -278,6 +370,31 @@ extern "C" int FR_ProcessBatchImages(
         
         return -100;
     }
+}
+
+// 强制处理缓冲区中的剩余图片
+extern "C" int FR_FlushBatch() {
+    if (!g_initialized || !g_recognizer) {
+        std::cerr << "Recognizer not initialized" << std::endl;
+        return -3;
+    }
+    
+    std::unique_lock<std::mutex> lock(g_image_buffer.mutex);
+    
+    if (g_image_buffer.size() == 0) {
+        std::cout << "Buffer is empty, nothing to flush" << std::endl;
+        return 0;
+    }
+    
+    std::cout << "Flushing buffer: " << g_image_buffer.size() << " images..." << std::endl;
+    processBatchLocked();
+    
+    // 通知所有等待的线程
+    g_image_buffer.cv.notify_all();
+    
+    std::cout << "Buffer flushed" << std::endl;
+    
+    return 0;
 }
 
 // 释放批量结果
