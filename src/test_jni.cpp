@@ -69,11 +69,17 @@ void testBatchPerformance(const char* modelPath, const std::string& imagePath, i
     std::cout << "\n--- Testing batch size: " << batchSize << " ---" << std::endl;
     
     // 转换图片为 Base64
+    auto t1 = std::chrono::high_resolution_clock::now();
     std::string base64 = imageToBase64(imagePath);
+    auto t2 = std::chrono::high_resolution_clock::now();
+    auto base64Time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+    
     if (base64.empty()) {
         std::cerr << "Failed to convert image to base64" << std::endl;
         return;
     }
+    
+    std::cout << "  Base64 encoding time: " << base64Time << " ms" << std::endl;
     
     // 复制 Base64 字符串形成批次
     std::vector<std::string> base64Strings(batchSize, base64);
@@ -94,7 +100,7 @@ void testBatchPerformance(const char* modelPath, const std::string& imagePath, i
     output.results = nullptr;
     output.count = 0;
     
-    // 测量处理时间
+    // 测量总处理时间
     auto start = std::chrono::high_resolution_clock::now();
     
     int ret = FR_ProcessBatchImages(&input, &output);

@@ -3,7 +3,7 @@
 #include <iostream>
 
 FaceDetector::FaceDetector(bool useGPU, int deviceId) 
-    : env_(ORT_LOGGING_LEVEL_WARNING, "FaceDetector"),
+    : env_(ORT_LOGGING_LEVEL_ERROR, "FaceDetector"),  // 改为 ERROR 级别，忽略警告
       session_(nullptr),
       inputWidth_(640),
       inputHeight_(640),

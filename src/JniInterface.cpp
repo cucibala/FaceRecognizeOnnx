@@ -6,6 +6,7 @@
 #include <string>
 #include <cstring>
 #include <memory>
+#include <chrono>
 
 // 全局变量：单例模式的识别器
 static std::unique_ptr<FaceRecognizer> g_recognizer = nullptr;

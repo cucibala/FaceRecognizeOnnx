@@ -3,7 +3,7 @@
 #include <iostream>
 
 FaceRecognizer::FaceRecognizer(bool useGPU, int deviceId)
-    : env_(ORT_LOGGING_LEVEL_WARNING, "FaceRecognizer"),
+    : env_(ORT_LOGGING_LEVEL_ERROR, "FaceRecognizer"),  // 改为 ERROR 级别，忽略警告
       session_(nullptr),
       inputWidth_(112),
       inputHeight_(112),
@@ -171,12 +171,9 @@ std::vector<float> FaceRecognizer::extractFeatureSimple(const cv::Mat& image) {
         return feature;
     }
     
-    std::cout << "Input image size: " << image.cols << "x" << image.rows << std::endl;
-    
     // 直接 resize 到模型输入尺寸
     cv::Mat resized;
     cv::resize(image, resized, cv::Size(inputWidth_, inputHeight_));
-    std::cout << "Resized to: " << resized.cols << "x" << resized.rows << std::endl;
     
     // 预处理
     std::vector<float> inputData;
@@ -188,8 +185,6 @@ std::vector<float> FaceRecognizer::extractFeatureSimple(const cv::Mat& image) {
         return feature;
     }
     
-    std::cout << "Preprocessed data size: " << inputData.size() << std::endl;
-    
     // 创建输入tensor
     std::vector<int64_t> inputShapeBatch = {1, 3, inputHeight_, inputWidth_};
     auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
@@ -200,39 +195,25 @@ std::vector<float> FaceRecognizer::extractFeatureSimple(const cv::Mat& image) {
     
     // 推理
     try {
-        std::cout << "Running inference..." << std::endl;
         auto outputTensors = session_->Run(
             Ort::RunOptions{nullptr},
             inputNamePtrs_.data(), &inputTensor, 1,
             outputNamePtrs_.data(), outputNamePtrs_.size()
         );
         
-        std::cout << "Inference completed, processing outputs..." << std::endl;
-        
         // 获取特征
         float* outputData = outputTensors[0].GetTensorMutableData<float>();
         auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
-        
-        std::cout << "Output shape: [";
-        for (size_t i = 0; i < outputShape.size(); i++) {
-            std::cout << outputShape[i];
-            if (i < outputShape.size() - 1) std::cout << ", ";
-        }
-        std::cout << "]" << std::endl;
         
         size_t featureSize = 1;
         for (auto dim : outputShape) {
             featureSize *= dim;
         }
         
-        std::cout << "Feature size: " << featureSize << std::endl;
-        
         feature.assign(outputData, outputData + featureSize);
         
         // L2归一化
         normalize(feature);
-        
-        std::cout << "Feature extraction successful!" << std::endl;
         
     } catch (const Ort::Exception& e) {
         std::cerr << "Error during feature extraction: " << e.what() << std::endl;
@@ -340,17 +321,17 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
     
     int batchSize = images.size();
     try {
-        // 预处理所有图片
-        std::vector<float> batchInputData;
-        batchInputData.reserve(batchSize * 3 * inputHeight_ * inputWidth_);
-        
+        // 优化：一次性分配所有内存
+        const int singleImageSize = 3 * inputHeight_ * inputWidth_;
+        std::vector<float> batchInputData(batchSize * singleImageSize);
         std::vector<bool> validFlags(batchSize, false);
         
+        // 优化：使用 OpenMP 并行处理（如果可用）
+        #pragma omp parallel for
         for (int i = 0; i < batchSize; i++) {
+            int offset = i * singleImageSize;
+            
             if (images[i].empty()) {
-                // 添加空数据占位
-                std::vector<float> emptyData(3 * inputHeight_ * inputWidth_, 0.0f);
-                batchInputData.insert(batchInputData.end(), emptyData.begin(), emptyData.end());
                 continue;
             }
 
@@ -358,57 +339,97 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
             cv::Mat resized;
             cv::resize(images[i], resized, cv::Size(inputWidth_, inputHeight_));
             
-            // 预处理
-            std::vector<float> inputData;
-            preprocess(resized, inputData);
+            // BGR转RGB并归一化（优化版本）
+            cv::Mat rgb;
+            cv::cvtColor(resized, rgb, cv::COLOR_BGR2RGB);
             
-            if (inputData.empty()) {
-                std::cerr << "  Preprocessing failed for image " << i << std::endl;
-                std::vector<float> emptyData(3 * inputHeight_ * inputWidth_, 0.0f);
-                batchInputData.insert(batchInputData.end(), emptyData.begin(), emptyData.end());
-            } else {
-                batchInputData.insert(batchInputData.end(), inputData.begin(), inputData.end());
-                validFlags[i] = true;
-            }
-        }
-        
-        // 创建批量输入tensor
-        std::vector<int64_t> inputShapeBatch = {static_cast<int64_t>(batchSize), 3, inputHeight_, inputWidth_};
-        auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
-            memoryInfo, batchInputData.data(), batchInputData.size(),
-            inputShapeBatch.data(), inputShapeBatch.size()
-        );
-        
-        auto outputTensors = session_->Run(
-            Ort::RunOptions{nullptr},
-            inputNamePtrs_.data(), &inputTensor, 1,
-            outputNamePtrs_.data(), outputNamePtrs_.size()
-        );
-
-        // 获取输出
-        float* outputData = outputTensors[0].GetTensorMutableData<float>();
-        auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
-        
-        // 解析每个图片的特征
-        if (outputShape.size() >= 2) {
-            int outputBatchSize = static_cast<int>(outputShape[0]);
-            int featureDim = static_cast<int>(outputShape[1]);
-            for (int i = 0; i < outputBatchSize && i < batchSize; i++) {
-                std::vector<float> feature;
-                
-                if (validFlags[i]) {
-                    // 提取该图片的特征
-                    int offset = i * featureDim;
-                    feature.assign(outputData + offset, outputData + offset + featureDim);
-                    
-                    // L2归一化
-                    normalize(feature);
+            // 直接写入批次数据（避免额外的 vector 复制）
+            for (int c = 0; c < 3; ++c) {
+                for (int h = 0; h < inputHeight_; ++h) {
+                    for (int w = 0; w < inputWidth_; ++w) {
+                        int idx = offset + c * inputHeight_ * inputWidth_ + h * inputWidth_ + w;
+                        batchInputData[idx] = (rgb.at<cv::Vec3b>(h, w)[c] - 127.5f) / 128.0f;
+                    }
                 }
-                
-                features.push_back(feature);
             }
+            
+            validFlags[i] = true;
         }
+        
+        // 创建批量输入tensor（使用 IO Binding 优化，如果在 GPU 上）
+        std::vector<int64_t> inputShapeBatch = {static_cast<int64_t>(batchSize), 3, inputHeight_, inputWidth_};
+        
+#ifdef USE_CUDA
+        // GPU 模式：使用 CUDA 内存
+        if (useGPU_) {
+            auto cudaMemInfo = Ort::MemoryInfo::CreateCuda(OrtDeviceAllocator, deviceId_);
+            Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
+                cudaMemInfo, batchInputData.data(), batchInputData.size(),
+                inputShapeBatch.data(), inputShapeBatch.size()
+            );
+            
+            auto outputTensors = session_->Run(
+                Ort::RunOptions{nullptr},
+                inputNamePtrs_.data(), &inputTensor, 1,
+                outputNamePtrs_.data(), outputNamePtrs_.size()
+            );
+            
+            float* outputData = outputTensors[0].GetTensorMutableData<float>();
+            auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
+            
+            // 解析特征
+            if (outputShape.size() >= 2) {
+                int outputBatchSize = static_cast<int>(outputShape[0]);
+                int featureDim = static_cast<int>(outputShape[1]);
+                
+                for (int i = 0; i < outputBatchSize && i < batchSize; i++) {
+                    std::vector<float> feature;
+                    
+                    if (validFlags[i]) {
+                        int offset = i * featureDim;
+                        feature.assign(outputData + offset, outputData + offset + featureDim);
+                        normalize(feature);
+                    }
+                    features.push_back(feature);
+                }
+            }
+        } else {
+#endif
+            // CPU 模式：使用 CPU 内存
+            auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+            Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
+                memoryInfo, batchInputData.data(), batchInputData.size(),
+                inputShapeBatch.data(), inputShapeBatch.size()
+            );
+            
+            auto outputTensors = session_->Run(
+                Ort::RunOptions{nullptr},
+                inputNamePtrs_.data(), &inputTensor, 1,
+                outputNamePtrs_.data(), outputNamePtrs_.size()
+            );
+            
+            float* outputData = outputTensors[0].GetTensorMutableData<float>();
+            auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
+            
+            // 解析特征
+            if (outputShape.size() >= 2) {
+                int outputBatchSize = static_cast<int>(outputShape[0]);
+                int featureDim = static_cast<int>(outputShape[1]);
+                
+                for (int i = 0; i < outputBatchSize && i < batchSize; i++) {
+                    std::vector<float> feature;
+                    
+                    if (validFlags[i]) {
+                        int offset = i * featureDim;
+                        feature.assign(outputData + offset, outputData + offset + featureDim);
+                        normalize(feature);
+                    }
+                    features.push_back(feature);
+                }
+            }
+#ifdef USE_CUDA
+        }
+#endif
         
     } catch (const Ort::Exception& e) {
         std::cerr << "Error during batch feature extraction: " << e.what() << std::endl;

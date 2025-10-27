@@ -39,9 +39,8 @@ else()
     message(STATUS "Using CPU only (use -DUSE_CUDA=ON or -DUSE_TENSORRT=ON to enable GPU)")
 endif()
 
-# Source files
-set(SOURCES
-    src/main.cpp
+# Core library sources (不包含 main.cpp 和 test_jni.cpp)
+set(LIB_SOURCES
     src/face_detector.cpp
     src/face_recognizer.cpp
     src/JniInterface.cpp
@@ -53,10 +52,29 @@ set(HEADERS
     src/JniInterface.h
 )
 
-add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+# 创建动态链接库 (共享库)
+add_library(image_processor SHARED ${LIB_SOURCES} ${HEADERS})
 
-# Link libraries
+target_link_libraries(image_processor 
+    ${OpenCV_LIBS}
+    onnxruntime
+)
+
+# 设置库的输出名称和版本
+set_target_properties(image_processor PROPERTIES
+    VERSION 1.0.0
+    SOVERSION 1
+    PUBLIC_HEADER "src/JniInterface.h"
+)
+
+# 主程序可执行文件
+add_executable(${PROJECT_NAME} 
+    src/main.cpp
+)
+
+# 主程序链接到共享库
 target_link_libraries(${PROJECT_NAME} 
+    image_processor
     ${OpenCV_LIBS}
     onnxruntime
 )
@@ -64,14 +82,25 @@ target_link_libraries(${PROJECT_NAME}
 # JNI Test executable
 add_executable(TestJniInterface 
     src/test_jni.cpp
-    src/face_detector.cpp
-    src/face_recognizer.cpp
-    src/JniInterface.cpp
 )
 
+# 测试程序也链接到共享库
 target_link_libraries(TestJniInterface 
+    image_processor
     ${OpenCV_LIBS}
     onnxruntime
+)
+
+# 测试 .so 库的小程序
+add_executable(TestLibrary test_so.cpp)
+target_link_libraries(TestLibrary image_processor)
+
+# 安装规则（可选）
+install(TARGETS image_processor
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
+    PUBLIC_HEADER DESTINATION include
 )
 
 # Copy models directory to build directory
