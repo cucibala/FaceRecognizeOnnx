@@ -94,7 +94,6 @@ void testJniInterface(const char* modelPath, const std::vector<std::string>& ima
         ImageBase64 img;
         img.base64_str = base64Strings.back().c_str();
         img.str_len = base64Strings.back().length();
-        img.user_data = nullptr;
         
         images.push_back(img);
         
