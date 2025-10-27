@@ -87,8 +87,8 @@ std::vector<unsigned char> base64_decode(const std::string& encoded_string) {
     return ret;
 }
 
-// 将 Base64 字符串转换为 OpenCV Mat
-cv::Mat base64ToMat(const char* base64_str, int str_len) {
+// 将 Base64 字符串转换为 OpenCV Mat（优化版本）
+cv::Mat base64ToMat(const char* base64_str, int str_len, bool show_timing = false) {
     try {
         auto t_base64_start = std::chrono::high_resolution_clock::now();
 
@@ -96,8 +96,6 @@ cv::Mat base64ToMat(const char* base64_str, int str_len) {
         std::vector<unsigned char> decoded_data = base64_decode(encoded_string);
 
         auto t_base64_end = std::chrono::high_resolution_clock::now();
-        double base64_decode_ms = std::chrono::duration<double, std::milli>(t_base64_end - t_base64_start).count();
-        std::cout << "[Time] Base64 decode: " << base64_decode_ms << " ms (decoded " << decoded_data.size() << " bytes)" << std::endl;
         
         if (decoded_data.empty()) {
             std::cerr << "Base64 decode failed: empty result (input length: " << str_len << ")" << std::endl;
@@ -105,11 +103,17 @@ cv::Mat base64ToMat(const char* base64_str, int str_len) {
         }
 
         auto t_imdecode_start = std::chrono::high_resolution_clock::now();
-        // 使用 imdecode 将字节流转换为图像
-        cv::Mat img = cv::imdecode(cv::Mat(decoded_data), cv::IMREAD_COLOR);
+        
+        // 优化：避免不必要的复制，直接使用 decoded_data 的内存
+        cv::Mat img = cv::imdecode(decoded_data, cv::IMREAD_COLOR);
+        
         auto t_imdecode_end = std::chrono::high_resolution_clock::now();
-        double imdecode_ms = std::chrono::duration<double, std::milli>(t_imdecode_end - t_imdecode_start).count();
-        std::cout << "[Time] imdecode: " << imdecode_ms << " ms" << std::endl;
+        
+        if (show_timing) {
+            double base64_decode_ms = std::chrono::duration<double, std::milli>(t_base64_end - t_base64_start).count();
+            double imdecode_ms = std::chrono::duration<double, std::milli>(t_imdecode_end - t_imdecode_start).count();
+            std::cout << "[Time] Base64: " << base64_decode_ms << " ms, imdecode: " << imdecode_ms << " ms" << std::endl;
+        }
 
         if (img.empty()) {
             std::cerr << "Failed to decode image from bytes (decoded " << decoded_data.size() 
@@ -125,6 +129,21 @@ cv::Mat base64ToMat(const char* base64_str, int str_len) {
         std::cerr << "Exception in base64ToMat: " << e.what() << std::endl;
         return cv::Mat();
     }
+}
+
+// 批量解码 Base64 图片（并行优化）
+std::vector<cv::Mat> base64ToMatBatch(const ImageBase64* images, int count) {
+    std::vector<cv::Mat> results(count);
+    
+    // 并行解码所有图片
+    #pragma omp parallel for num_threads(4)
+    for (int i = 0; i < count; i++) {
+        if (images[i].base64_str && images[i].str_len > 0) {
+            results[i] = base64ToMat(images[i].base64_str, images[i].str_len, false);
+        }
+    }
+    
+    return results;
 }
 
 // 初始化识别器（可选，也可以在 ProcessBatchImages 中自动初始化）
@@ -193,42 +212,31 @@ extern "C" int FR_ProcessBatchImages(
         output->count = input->count;
         output->results = new ImageResult[input->count];
         
-        // 解码所有图片
-        std::vector<cv::Mat> images;
-        std::vector<int> validIndices;
-        
+        // 初始化所有结果状态
         for (int i = 0; i < input->count; i++) {
-            ImageResult& result = output->results[i];
-            const ImageBase64& img_input = input->images[i];
-            
-            // 初始化结果
-            result.features = nullptr;
-            result.feature_dim = 0;
-            result.status = -1;
-            
-            // 验证输入
-            if (!img_input.base64_str || img_input.str_len <= 0) {
-                result.status = -10;
-                images.push_back(cv::Mat()); // 占位
-                continue;
+            output->results[i].features = nullptr;
+            output->results[i].feature_dim = 0;
+            output->results[i].status = -1;
+        }
+        
+        // 并行解码所有图片（使用优化的批量解码）
+        std::vector<cv::Mat> images = base64ToMatBatch(input->images, input->count);
+        
+        // 标记有效的图片
+        std::vector<int> validIndices;
+        for (int i = 0; i < input->count; i++) {
+            if (!input->images[i].base64_str || input->images[i].str_len <= 0) {
+                output->results[i].status = -10;
+            } else if (images[i].empty()) {
+                output->results[i].status = -11;
+            } else {
+                validIndices.push_back(i);
             }
-            
-            // Base64 解码并转换为 Mat
-            cv::Mat image = base64ToMat(img_input.base64_str, img_input.str_len);
-            
-            if (image.empty()) {
-                result.status = -11;
-                images.push_back(cv::Mat()); // 占位
-                continue;
-            }
-            
-            images.push_back(image);
-            validIndices.push_back(i);
         }
         
         auto decodeEnd = std::chrono::high_resolution_clock::now();
         auto decodeDuration = std::chrono::duration_cast<std::chrono::milliseconds>(decodeEnd - decodeStart);
-        std::cout << "Decode time: " << decodeDuration.count() << " ms" << std::endl;
+        std::cout << "Parallel decode time: " << decodeDuration.count() << " ms (" << input->count << " images)" << std::endl;
 
         auto extractStart = std::chrono::high_resolution_clock::now();
         // 批量提取特征

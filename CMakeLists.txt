@@ -8,11 +8,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     # 启用 SSE2/AVX 优化（base64 解码加速）
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse2 -O3")
-    message(STATUS "Enabled SSE2 optimizations for base64 decoding")
+    message(STATUS "Enabled SSE2 optimizations")
 elseif(MSVC)
     # Windows MSVC 默认支持 SSE2
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /O2 /arch:SSE2")
-    message(STATUS "Enabled SSE2 optimizations for base64 decoding (MSVC)")
+    message(STATUS "Enabled SSE2 optimizations (MSVC)")
+endif()
+
+# OpenMP 支持（并行图片解码）
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+    message(STATUS "OpenMP enabled for parallel image decoding")
+else()
+    message(WARNING "OpenMP not found - image decoding will be sequential")
 endif()
 
 # GPU 支持选项
@@ -70,6 +79,11 @@ target_link_libraries(image_processor
     ${OpenCV_LIBS}
     onnxruntime
 )
+
+# 链接 OpenMP（如果可用）
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(image_processor OpenMP::OpenMP_CXX)
+endif()
 
 # 设置库的输出名称和版本
 set_target_properties(image_processor PROPERTIES
