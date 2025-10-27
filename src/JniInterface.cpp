@@ -98,21 +98,15 @@ extern "C" int FR_Initialize(const char* model_path) {
 extern "C" int FR_InitializeWithGPU(const char* model_path, bool use_gpu, int device_id) {
     try {
         if (g_initialized && g_modelPath == model_path) {
-            std::cout << "Model already initialized" << std::endl;
             return 0;
         }
         
-        std::cout << "Initializing face recognizer with model: " << model_path << std::endl;
-        if (use_gpu) {
-            std::cout << "GPU mode enabled (device: " << device_id << ")" << std::endl;
-        } else {
-            std::cout << "CPU mode" << std::endl;
-        }
+        std::cout << "Initializing: " << model_path << " [" << (use_gpu ? "GPU" : "CPU") << "]" << std::endl;
         
         g_recognizer = std::make_unique<FaceRecognizer>(use_gpu, device_id);
         
         if (!g_recognizer->loadModel(model_path)) {
-            std::cerr << "Failed to load model: " << model_path << std::endl;
+            std::cerr << "Failed to load model" << std::endl;
             g_recognizer.reset();
             g_initialized = false;
             return -1;
@@ -120,17 +114,16 @@ extern "C" int FR_InitializeWithGPU(const char* model_path, bool use_gpu, int de
         
         g_modelPath = model_path;
         g_initialized = true;
-        std::cout << "Face recognizer initialized successfully" << std::endl;
         
         // TensorRT 引擎预热（提前构建常用 batch size 的引擎）
         if (use_gpu) {
-            std::cout << "\nStarting TensorRT warmup..." << std::endl;
-            g_recognizer->warmupTensorRT({1, 16, 32});  // 预热常用的 batch size
+            g_recognizer->warmupTensorRT({1, 16, 32});
         }
         
+        std::cout << "Ready" << std::endl;
         return 0;
     } catch (const std::exception& e) {
-        std::cerr << "Exception in FR_Initialize: " << e.what() << std::endl;
+        std::cerr << "Init failed: " << e.what() << std::endl;
         return -2;
     }
 }
@@ -156,13 +149,10 @@ extern "C" int FR_ProcessBatchImages(
         return -3;
     }
     
-    std::cout << "Processing batch of " << input->count << " images" << std::endl;
-    
     try {
         // 分配结果数组
         output->count = input->count;
         output->results = new ImageResult[input->count];
-        auto t1 = std::chrono::high_resolution_clock::now();
         
         // 解码所有图片
         std::vector<cv::Mat> images;
@@ -179,7 +169,6 @@ extern "C" int FR_ProcessBatchImages(
             
             // 验证输入
             if (!img_input.base64_str || img_input.str_len <= 0) {
-                std::cerr << "  Invalid base64 string for image " << i << std::endl;
                 result.status = -10;
                 images.push_back(cv::Mat()); // 占位
                 continue;
@@ -189,7 +178,6 @@ extern "C" int FR_ProcessBatchImages(
             cv::Mat image = base64ToMat(img_input.base64_str, img_input.str_len);
             
             if (image.empty()) {
-                std::cerr << "  Failed to decode image " << i << std::endl;
                 result.status = -11;
                 images.push_back(cv::Mat()); // 占位
                 continue;
@@ -199,13 +187,8 @@ extern "C" int FR_ProcessBatchImages(
             validIndices.push_back(i);
         }
         
-        auto t2 = std::chrono::high_resolution_clock::now();
         // 批量提取特征
-        std::cout << "Running batch feature extraction..." << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << " ms" << std::endl;
-
         auto allFeatures = g_recognizer->extractFeaturesBatchSimple(images);
-        auto t3 = std::chrono::high_resolution_clock::now();
-        std::cout << "Batch feature extraction completed in " << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count() << " ms" << std::endl;
 
         // 将结果复制到输出
         for (size_t i = 0; i < allFeatures.size() && i < static_cast<size_t>(input->count); i++) {
@@ -222,11 +205,10 @@ extern "C" int FR_ProcessBatchImages(
             }
         }
         
-        std::cout << "Batch processing completed" << std::endl;
         return 0;
         
     } catch (const std::exception& e) {
-        std::cerr << "Exception in FR_ProcessBatchImages: " << e.what() << std::endl;
+        std::cerr << "Batch processing error: " << e.what() << std::endl;
         
         // 清理已分配的内存
         if (output->results) {
@@ -249,8 +231,6 @@ extern "C" void FR_FreeBatchResults(BatchImageOutput* output) {
         return;
     }
     
-    std::cout << "Freeing batch results for " << output->count << " images" << std::endl;
-    
     if (output->results) {
         for (int i = 0; i < output->count; i++) {
             if (output->results[i].features) {
@@ -263,13 +243,10 @@ extern "C" void FR_FreeBatchResults(BatchImageOutput* output) {
     }
     
     output->count = 0;
-    
-    std::cout << "Batch results freed" << std::endl;
 }
 
 // 释放识别器资源
 extern "C" void FR_Cleanup() {
-    std::cout << "Cleaning up face recognizer" << std::endl;
     g_recognizer.reset();
     g_initialized = false;
     g_modelPath.clear();

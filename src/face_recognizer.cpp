@@ -13,7 +13,6 @@ FaceRecognizer::FaceRecognizer(bool useGPU, int deviceId)
     
     // 减少线程数以避免与 OpenMP 冲突
     sessionOptions_.SetIntraOpNumThreads(2);
-    sessionOptions_.SetInterOpNumThreads(2);
     sessionOptions_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
     
     // 如果启用 GPU，配置 GPU 选项
@@ -58,13 +57,6 @@ bool FaceRecognizer::loadModel(const std::string& modelPath) {
                 if (modelWidth > 0) {
                     inputWidth_ = static_cast<int>(modelWidth);
                 }
-                
-                std::cout << "Model input shape: [" << inputShape_[0] << ", " << inputShape_[1] 
-                          << ", " << inputShape_[2] << ", " << inputShape_[3] << "]" << std::endl;
-                if (modelHeight <= 0 || modelWidth <= 0) {
-                    std::cout << "Note: Dynamic dimensions detected (-1), using default size: " 
-                              << inputWidth_ << "x" << inputHeight_ << std::endl;
-                }
             }
         }
         
@@ -86,32 +78,11 @@ bool FaceRecognizer::loadModel(const std::string& modelPath) {
             outputNamePtrs_.push_back(name.c_str());
         }
         
-        std::cout << "Face recognizer model loaded successfully!" << std::endl;
-        std::cout << "Using input size: " << inputWidth_ << "x" << inputHeight_ << std::endl;
-        
-        // 显示配置的 Provider
-        std::cout << "Configured Execution Providers: ";
-#ifdef USE_TENSORRT
-        std::cout << "TensorRT ";
-#endif
-#ifdef USE_CUDA
-        std::cout << "CUDA ";
-#endif
-#if !defined(USE_CUDA) && !defined(USE_TENSORRT)
-        std::cout << "CPU ";
+        std::cout << "Model loaded: " << inputWidth_ << "x" << inputHeight_;
+#if defined(USE_CUDA) || defined(USE_TENSORRT)
+        if (useGPU_) std::cout << " [GPU-" << deviceId_ << "]";
 #endif
         std::cout << std::endl;
-        
-        if (useGPU_) {
-#if defined(USE_CUDA) || defined(USE_TENSORRT)
-            std::cout << "✓ GPU mode active (device: " << deviceId_ << ")" << std::endl;
-#else
-            std::cerr << "⚠️  WARNING: GPU requested but compiled without CUDA/TensorRT!" << std::endl;
-            std::cerr << "    Recompile with: cmake -DUSE_CUDA=ON" << std::endl;
-#endif
-        }
-        
-        std::cout << "Number of outputs: " << outputNames_.size() << std::endl;
         
         return true;
     } catch (const Ort::Exception& e) {
@@ -406,39 +377,12 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
         auto t2 = std::chrono::high_resolution_clock::now();
         auto inferenceTime = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
         
-        std::cout << "\n[Time Breakdown - batch=" << batchSize << "]" << std::endl;
-        std::cout << "  Preprocessing: " << preprocessTime << " ms" << std::endl;
-        std::cout << "  Tensor creation: " << tensorTime << " ms" << std::endl;
-        std::cout << "  Pure inference: " << inferenceTime << " ms ⭐" << std::endl;
-        std::cout << "  Total: " << (preprocessTime + tensorTime + inferenceTime) << " ms" << std::endl;
-        
-        std::cout << "==> Batch inference: " << inferenceTime << " ms (batch=" << batchSize << ")" << std::endl;
-        std::cout << "    Per image: " << (inferenceTime * 1.0 / batchSize) << " ms" << std::endl;
-        std::cout << "    Throughput: " << (batchSize * 1000.0 / inferenceTime) << " img/s" << std::endl;
-        
-        // 性能诊断
+        // 简化日志：只在推理时间异常时打印警告
         if (useGPU_) {
             double perImageTime = inferenceTime * 1.0 / batchSize;
-            std::cout << "\n[Performance Check]" << std::endl;
-            
             if (perImageTime > 5.0) {
-                std::cerr << "❌ CRITICAL: Likely running on CPU!" << std::endl;
-                std::cerr << "   Per-image time: " << perImageTime << " ms (expected <1ms on GPU)" << std::endl;
-                std::cerr << "   Check:" << std::endl;
-                std::cerr << "   1. ldd ./TestJniInterface | grep onnxruntime" << std::endl;
-                std::cerr << "   2. ls $ONNXRUNTIME_DIR/lib/ | grep cuda" << std::endl;
-                std::cerr << "   3. nvidia-smi (GPU should show activity)" << std::endl;
-            } else if (perImageTime > 2.0) {
-                std::cout << "⚠️  WARNING: Slower than expected for GPU" << std::endl;
-                std::cout << "   Per-image: " << perImageTime << " ms (expected <1ms)" << std::endl;
-            } else {
-                std::cout << "✓ Performance looks good for GPU" << std::endl;
-                std::cout << "   Per-image: " << perImageTime << " ms" << std::endl;
+                std::cerr << "⚠️  GPU performance warning: " << perImageTime << " ms/image (batch=" << batchSize << ")" << std::endl;
             }
-        } else {
-            double perImageTime = inferenceTime * 1.0 / batchSize;
-            std::cout << "\n[CPU Mode]" << std::endl;
-            std::cout << "   Per-image: " << perImageTime << " ms (typical CPU speed)" << std::endl;
         }
         
         // 获取输出
@@ -495,93 +439,61 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatch(const std::
 
 void FaceRecognizer::setupGPU() {
     try {
-        std::cout << "Configuring GPU support..." << std::endl;
-        
 #ifdef USE_TENSORRT
-        // TensorRT - 尝试添加，失败则跳过
-        // 如果不想等待引擎构建，可以注释掉整个 TensorRT 块，只用 CUDA
         try {
-            std::cout << "  Attempting to add TensorRT provider..." << std::endl;
-            
             OrtTensorRTProviderOptions trt_options{};
             trt_options.device_id = deviceId_;
             trt_options.trt_engine_cache_enable = 1;
             trt_options.trt_engine_cache_path = "./trt_cache";
-            
-            // TensorRT 详细配置
-            // trt_options.trt_max_workspace_size = 2ULL * 1024 * 1024 * 1024; // 2GB
-            trt_options.trt_fp16_enable = 1;  // 启用 FP16
-            trt_options.trt_int8_enable = 0;   // 禁用 INT8
-            trt_options.trt_dla_enable = 0;    // 禁用 DLA
+            trt_options.trt_fp16_enable = 1;
+            trt_options.trt_int8_enable = 0;
+            trt_options.trt_dla_enable = 0;
             trt_options.trt_dump_subgraphs = 0;
             trt_options.trt_engine_decryption_enable = false;
             
             sessionOptions_.AppendExecutionProvider_TensorRT(trt_options);
-            std::cout << "✓ TensorRT provider added successfully!" << std::endl;
-            std::cout << "  Device: " << deviceId_ << std::endl;
-            std::cout << "  FP16: Enabled" << std::endl;
-            std::cout << "  Cache path: ./trt_cache" << std::endl;
-            std::cout << "\n⚠️  IMPORTANT: TensorRT Engine Building Notes" << std::endl;
-            std::cout << "  - First run with each NEW batch size: 1-5 min (building engine)" << std::endl;
-            std::cout << "  - Subsequent runs: Fast (engine cached in ./trt_cache)" << std::endl;
-            std::cout << "  - If program seems frozen during inference: WAIT, engine is building!" << std::endl;
+            std::cout << "TensorRT enabled (FP16, cache: ./trt_cache)" << std::endl;
         } catch (const Ort::Exception& e) {
-            std::cerr << "⚠️  TensorRT provider failed: " << e.what() << std::endl;
-            std::cerr << "   This is OK, will use CUDA instead" << std::endl;
+            std::cerr << "TensorRT failed, using CUDA: " << e.what() << std::endl;
         } catch (...) {
-            std::cerr << "⚠️  TensorRT provider failed (unknown error)" << std::endl;
-            std::cerr << "   This is OK, will use CUDA instead" << std::endl;
+            std::cerr << "TensorRT failed, using CUDA" << std::endl;
         }
 #endif
 
 #ifdef USE_CUDA
-        // CUDA - 更稳定的选择
         try {
             OrtCUDAProviderOptions cuda_options;
             cuda_options.device_id = deviceId_;
-            
             sessionOptions_.AppendExecutionProvider_CUDA(cuda_options);
-            std::cout << "✓ CUDA provider added (device: " << deviceId_ << ")" << std::endl;
         } catch (const Ort::Exception& e) {
-            std::cerr << "⚠️  Failed to add CUDA provider: " << e.what() << std::endl;
-            std::cerr << "   Falling back to CPU" << std::endl;
+            std::cerr << "CUDA failed, using CPU: " << e.what() << std::endl;
         }
 #endif
 
 #if !defined(USE_CUDA) && !defined(USE_TENSORRT)
-        std::cerr << "Warning: GPU requested but not compiled with CUDA/TensorRT support!" << std::endl;
-        std::cerr << "Please recompile with: cmake -DUSE_CUDA=ON" << std::endl;
-        std::cerr << "Using CPU execution" << std::endl;
+        std::cerr << "Warning: GPU not compiled, using CPU" << std::endl;
 #endif
         
     } catch (const std::exception& e) {
-        std::cerr << "Error setting up GPU: " << e.what() << std::endl;
-        std::cerr << "Using CPU execution" << std::endl;
+        std::cerr << "GPU setup error: " << e.what() << std::endl;
     }
 }
 
 void FaceRecognizer::warmupTensorRT(const std::vector<int>& batchSizes) {
     if (!session_ || !useGPU_) {
-        std::cout << "Skipping warmup: model not loaded or GPU not enabled" << std::endl;
         return;
     }
     
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "  TensorRT Engine Warmup" << std::endl;
-    std::cout << "========================================" << std::endl;
-    std::cout << "Building TensorRT engines for batch sizes: ";
+    std::cout << "Warming up batch sizes: ";
     for (size_t i = 0; i < batchSizes.size(); i++) {
         std::cout << batchSizes[i];
         if (i < batchSizes.size() - 1) std::cout << ", ";
     }
-    std::cout << std::endl;
-    std::cout << "This may take 1-5 minutes, but only runs once..." << std::endl;
-    std::cout << std::endl;
+    std::cout << " (may take 1-5 min on first run)" << std::endl;
     
     auto warmupStart = std::chrono::high_resolution_clock::now();
     
     for (int batchSize : batchSizes) {
-        std::cout << "📦 Building engine for batch=" << batchSize << "..." << std::flush;
         auto start = std::chrono::high_resolution_clock::now();
         
         // 创建虚拟输入数据
@@ -596,7 +508,6 @@ void FaceRecognizer::warmupTensorRT(const std::vector<int>& batchSizes) {
         );
         
         try {
-            // 运行一次推理以触发 TensorRT 引擎构建
             auto outputTensors = session_->Run(
                 Ort::RunOptions{nullptr},
                 inputNamePtrs_.data(), &inputTensor, 1,
@@ -606,19 +517,19 @@ void FaceRecognizer::warmupTensorRT(const std::vector<int>& batchSizes) {
             auto end = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
             
-            std::cout << " ✓ Done in " << duration << " ms" << std::endl;
+            // 只在耗时较长时输出（构建引擎）
+            if (duration > 10000) {
+                std::cout << "  batch=" << batchSize << " built in " << (duration/1000.0) << "s" << std::endl;
+            }
         } catch (const Ort::Exception& e) {
-            std::cerr << " ✗ Failed: " << e.what() << std::endl;
+            std::cerr << "  batch=" << batchSize << " failed: " << e.what() << std::endl;
         }
     }
     
     auto warmupEnd = std::chrono::high_resolution_clock::now();
     auto totalWarmupTime = std::chrono::duration_cast<std::chrono::milliseconds>(warmupEnd - warmupStart).count();
     
-    std::cout << "\n✓ Warmup completed in " << totalWarmupTime << " ms" << std::endl;
-    std::cout << "  All engines cached in ./trt_cache/" << std::endl;
-    std::cout << "  Future runs will be fast!" << std::endl;
-    std::cout << "========================================\n" << std::endl;
+    std::cout << "Warmup done (" << (totalWarmupTime/1000.0) << "s)" << std::endl;
 }
 
 float FaceRecognizer::compareFaces(const std::vector<float>& feature1, const std::vector<float>& feature2) {
