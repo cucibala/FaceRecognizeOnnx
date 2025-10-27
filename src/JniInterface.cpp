@@ -67,17 +67,27 @@ std::vector<unsigned char> base64_decode(const std::string& encoded_string) {
 // 将 Base64 字符串转换为 OpenCV Mat
 cv::Mat base64ToMat(const char* base64_str, int str_len) {
     try {
+        auto t_base64_start = std::chrono::high_resolution_clock::now();
+
         std::string encoded_string(base64_str, str_len);
         std::vector<unsigned char> decoded_data = base64_decode(encoded_string);
+
+        auto t_base64_end = std::chrono::high_resolution_clock::now();
+        double base64_decode_ms = std::chrono::duration<double, std::milli>(t_base64_end - t_base64_start).count();
+        std::cout << "[Time] Base64 decode: " << base64_decode_ms << " ms" << std::endl;
         
         if (decoded_data.empty()) {
             std::cerr << "Base64 decode failed: empty result" << std::endl;
             return cv::Mat();
         }
-        
+
+        auto t_imdecode_start = std::chrono::high_resolution_clock::now();
         // 使用 imdecode 将字节流转换为图像
         cv::Mat img = cv::imdecode(cv::Mat(decoded_data), cv::IMREAD_COLOR);
-        
+        auto t_imdecode_end = std::chrono::high_resolution_clock::now();
+        double imdecode_ms = std::chrono::duration<double, std::milli>(t_imdecode_end - t_imdecode_start).count();
+        std::cout << "[Time] imdecode: " << imdecode_ms << " ms" << std::endl;
+
         if (img.empty()) {
             std::cerr << "Failed to decode image from bytes" << std::endl;
         }
