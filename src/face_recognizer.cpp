@@ -353,6 +353,7 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
         
         auto tp2 = std::chrono::high_resolution_clock::now();
         auto preprocessTime = std::chrono::duration_cast<std::chrono::milliseconds>(tp2 - tp1).count();
+        std::cout << "Preprocess time: " << preprocessTime << " ms" << std::endl;
         
         // ===== 时间测量：创建tensor =====
         auto tt1 = std::chrono::high_resolution_clock::now();
@@ -366,6 +367,8 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
         
         auto tt2 = std::chrono::high_resolution_clock::now();
         auto tensorTime = std::chrono::duration_cast<std::chrono::milliseconds>(tt2 - tt1).count();
+        std::cout << "Tensor time: " << tensorTime << " ms" << std::endl;
+
         
         // ===== 时间测量：纯推理 =====
         auto t1 = std::chrono::high_resolution_clock::now();
@@ -376,7 +379,6 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
         );
         auto t2 = std::chrono::high_resolution_clock::now();
         auto inferenceTime = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
-
         std::cout << "Inference time: " << inferenceTime << " ms" << std::endl;
         
         // 获取输出
