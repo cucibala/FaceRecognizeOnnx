@@ -376,14 +376,8 @@ std::vector<std::vector<float>> FaceRecognizer::extractFeaturesBatchSimple(const
         );
         auto t2 = std::chrono::high_resolution_clock::now();
         auto inferenceTime = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
-        
-        // 简化日志：只在推理时间异常时打印警告
-        if (useGPU_) {
-            double perImageTime = inferenceTime * 1.0 / batchSize;
-            if (perImageTime > 5.0) {
-                std::cerr << "⚠️  GPU performance warning: " << perImageTime << " ms/image (batch=" << batchSize << ")" << std::endl;
-            }
-        }
+
+        std::cout << "Inference time: " << inferenceTime << " ms" << std::endl;
         
         // 获取输出
         float* outputData = outputTensors[0].GetTensorMutableData<float>();
