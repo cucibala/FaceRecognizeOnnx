@@ -13,6 +13,7 @@ public:
     
     bool loadModel(const std::string& modelPath);
     std::vector<float> extractFeature(const cv::Mat& image, const FaceBox& face);
+    std::vector<float> extractFeatureSimple(const cv::Mat& image);  // 直接处理整张图
     float compareFaces(const std::vector<float>& feature1, const std::vector<float>& feature2);
     
 private:
@@ -25,8 +26,10 @@ private:
     Ort::SessionOptions sessionOptions_;
     Ort::AllocatorWithDefaultOptions allocator_;
     
-    std::vector<const char*> inputNames_;
-    std::vector<const char*> outputNames_;
+    std::vector<std::string> inputNames_;
+    std::vector<std::string> outputNames_;
+    std::vector<const char*> inputNamePtrs_;
+    std::vector<const char*> outputNamePtrs_;
     std::vector<int64_t> inputShape_;
     
     int inputWidth_;
