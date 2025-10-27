@@ -33,7 +33,7 @@ struct ImageBuffer {
     }
     
     bool is_full() const {
-        return images.size() >= 1024;
+        return images.size() >= 64;
     }
     
     int size() const {
